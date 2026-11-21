@@ -1,155 +1,205 @@
-import type { CompactServant, CompactCE, CompactMC, Effect, EffectKind, LevelVal, Card } from '../data/types';
+import type { CompactServant, CompactCE, CompactMC, Constants, Effect, EffectKind, LevelVal, Card } from '../data/types';
 
-export interface Buff { kind: Effect['kind']; value: number; turns: number; count: number; cards?: Card[]; opTraits?: number[]; }
+/*
+ * Immutability convention: every exported function returns a new state and
+ * never mutates its input. Types are readonly to enforce it. Copies are
+ * copy-on-write: unchanged units, the back line, enemies and the affinity
+ * table are shared between states, so cloning is cheap for the solver.
+ */
+
+export type BuffKind = Extract<EffectKind, 'atkUp' | 'cardUp' | 'npDmgUp' | 'powerUp' | 'npGainUp' | 'ocUp' | 'dmgPlus'>;
+export interface Buff {
+  readonly kind: BuffKind; readonly value: number; readonly turns: number; readonly count: number;
+  readonly cards?: readonly Card[]; readonly opTraits?: readonly number[];
+}
 export interface Unit {
-  key: string; svt: CompactServant; lv: number; npLv: number; skillLv: [number, number, number];
-  atk: number; gauge: number; cd: [number, number, number]; buffs: Buff[];
+  readonly key: string; readonly svt: CompactServant; readonly lv: number; readonly npLv: number;
+  readonly skillLv: readonly [number, number, number];
+  readonly atk: number; readonly gauge: number;
+  readonly cd: readonly [number, number, number];
+  readonly buffs: readonly Buff[];
 }
-export interface Enemy { hp: number; className: string; attribute: string; traits: number[]; tdRate: number; }
+export interface Enemy {
+  readonly hp: number; readonly className: string; readonly attribute: string;
+  readonly traits: readonly number[]; readonly tdRate: number;
+}
+/** Constants resolved for one unit against one enemy (permille). */
+export interface Affinity { readonly classAtk: number; readonly triangle: number; readonly attribute: number; }
 export interface BattleState {
-  turn: number; wave: number;          // turn starts at 1; wave is a 0-based index into Quest.waves
-  front: (Unit | null)[]; back: Unit[];
-  enemies: Enemy[];
-  mcCd: number[]; swapped: boolean;
+  readonly turn: number;               // starts at 1
+  readonly wave: number;               // 0-based index into Quest.waves
+  readonly front: readonly (Unit | null)[];
+  readonly back: readonly Unit[];
+  readonly enemies: readonly Enemy[];
+  readonly mcCd: readonly number[];
+  readonly swapped: boolean;
+  /** unit key -> affinity against enemies[i] of the current wave. */
+  readonly aff: Readonly<Record<string, readonly Affinity[]>>;
 }
-export interface TeamMember { svt: CompactServant; lv: number; npLv: number; skillLv: [number, number, number]; append2Lv: number; fou: number; ce: CompactCE | null; ceLv: number; ceMlb: boolean; key: string; }
+export interface TeamMember {
+  svt: CompactServant; lv: number; npLv: number; skillLv: [number, number, number]; append2Lv: number;
+  fou: number; ce: CompactCE | null; ceLv: number; ceMlb: boolean; key: string;
+}
+export interface Quest { readonly waves: readonly (readonly Enemy[])[]; }
 
-export interface Quest { waves: Enemy[][]; }
-
-// MVP: the real cap is 100%/200%/300% depending on the servant and NP level.
-export const GAUGE_CAP = 30000;
+/**
+ * NP gauge cap by NP level: NP1 100%, NP2-4 200%, NP5 300%. This is a game
+ * rule, not Atlas data: Chaldea's Laplace hardcodes it
+ * (lib/app/battle/models/svt_entity.dart, getNPCap) on FULL_TD_POINT = 10000.
+ */
+export const gaugeCap = (npLv: number): number => 10000 * (npLv <= 1 ? 1 : npLv < 5 ? 2 : 3);
 
 export interface Mods {
   atkMod: number; cardMod: number; npDmgMod: number; powerMod: number;
   npGainMod: number; ocUp: number; dmgPlus: number;
 }
 
-// Buff kinds and the modifier each one adds to. The keys are exactly the
-// effect kinds that become Buffs; every other kind is an instant function.
-const MOD_FIELD: Partial<Record<EffectKind, keyof Mods>> = {
+// Buff kinds and the modifier each one adds to.
+const MOD_FIELD: Record<BuffKind, keyof Mods> = {
   atkUp: 'atkMod', cardUp: 'cardMod', npDmgUp: 'npDmgMod', powerUp: 'powerMod',
   npGainUp: 'npGainMod', ocUp: 'ocUp', dmgPlus: 'dmgPlus',
 };
-export const isBuffKind = (k: EffectKind): boolean => MOD_FIELD[k] !== undefined;
+export const isBuffKind = (k: EffectKind): k is BuffKind => k in MOD_FIELD;
 
-/** Raw Atlas quest (one phase) -> engine quest. Only the initial deck ('enemy'), by wave then deckId. */
-export function questFromAtlas(raw: any): Quest {
-  const stages = [...raw.stages].sort((a: any, b: any) => a.wave - b.wave);
+// --- affinity ------------------------------------------------------------
+
+function lookup(table: Record<string, number> | undefined, key: string, what: string): number {
+  const v = table?.[key];
+  if (v === undefined) throw new Error(`missing constant: ${what}`);
+  return v;
+}
+export function affinity(c: Constants, svt: CompactServant, e: Enemy): Affinity {
   return {
-    waves: stages.map((st: any) => st.enemies
-      .filter((e: any) => (e.deck ?? 'enemy') === 'enemy')
-      .sort((a: any, b: any) => a.deckId - b.deckId)
-      .map((e: any): Enemy => ({
-        hp: e.hp, className: e.svt.className, attribute: e.svt.attribute,
-        traits: e.traits.map((t: any) => t.id), tdRate: e.serverMod.tdRate,
-      }))),
+    classAtk: lookup(c.classAtk, svt.className, `classAtk[${svt.className}]`),
+    triangle: lookup(c.classRel[svt.className], e.className, `classRel[${svt.className}][${e.className}]`),
+    attribute: lookup(c.attrRel[svt.attribute], e.attribute, `attrRel[${svt.attribute}][${e.attribute}]`),
   };
 }
-
-// --- copying -------------------------------------------------------------
-// Shallow per-level copies: svt, Buff objects and enemy traits are shared and
-// must be treated as immutable. Everything else is copied, so callers can
-// mutate the result freely.
-export function cloneUnit(u: Unit): Unit {
-  return { ...u, cd: [u.cd[0], u.cd[1], u.cd[2]], buffs: u.buffs.slice() };
-}
-export function cloneState(s: BattleState): BattleState {
-  return {
-    turn: s.turn, wave: s.wave,
-    front: s.front.map((u) => (u ? cloneUnit(u) : null)),
-    back: s.back.map(cloneUnit),
-    enemies: s.enemies.map((e) => ({ ...e })),
-    mcCd: s.mcCd.slice(), swapped: s.swapped,
-  };
+function affTable(c: Constants, units: readonly Unit[], enemies: readonly Enemy[]): Record<string, Affinity[]> {
+  const out: Record<string, Affinity[]> = {};
+  for (const u of units) out[u.key] = enemies.map((e) => affinity(c, u.svt, e));
+  return out;
 }
 
-const aliveFront = (s: BattleState): Unit[] => s.front.filter((u): u is Unit => u !== null);
-const frontUnit = (s: BattleState, key: string): Unit => {
-  const u = s.front.find((x) => x?.key === key);
-  if (!u) throw new Error(`unit ${key} is not on the front line`);
-  return u;
+// --- copy-on-write helpers -----------------------------------------------
+
+/** Mutable shell of a state: only the front array is copied; units are replaced, never mutated. */
+type Draft = { -readonly [K in keyof BattleState]: BattleState[K] };
+type Front = (Unit | null)[];
+const draft = (s: BattleState): Draft & { front: Front } => ({ ...s, front: s.front.slice() });
+
+const frontIndex = (front: readonly (Unit | null)[], key: string): number => {
+  const i = front.findIndex((x) => x?.key === key);
+  if (i < 0) throw new Error(`unit ${key} is not on the front line`);
+  return i;
 };
+const sub3 = (cd: readonly [number, number, number], n: number): [number, number, number] =>
+  [Math.max(0, cd[0] - n), Math.max(0, cd[1] - n), Math.max(0, cd[2] - n)];
 
-function toBuff(e: Effect, v: LevelVal): Buff {
-  const b: Buff = { kind: e.kind, value: v.value, turns: v.turns, count: v.count };
+function toBuff(e: Effect, kind: BuffKind, v: LevelVal): Buff {
+  const b: { -readonly [K in keyof Buff]: Buff[K] } = { kind, value: v.value, turns: v.turns, count: v.count };
   if (e.cards) b.cards = e.cards;
   if (e.opTraits) b.opTraits = e.opTraits;
   return b;
 }
 
+/** One effect on one unit; returns the new unit. */
+function effectOn(u: Unit, e: Effect, v: LevelVal): Unit {
+  if (e.kind === 'gainNp') return { ...u, gauge: Math.min(gaugeCap(u.npLv), u.gauge + v.value) };
+  if (e.kind === 'shortenSkill') return { ...u, cd: sub3(u.cd, v.value) };
+  if (isBuffKind(e.kind)) return { ...u, buffs: [...u.buffs, toBuff(e, e.kind, v)] };
+  return u;
+}
+
 /**
- * Apply one effect at the given level values, mutating `s` (a clone).
+ * Apply one effect at the given level values to the draft's front line.
  * casterKey null = Mystic Code (no self/ptOther). Enemy-side targets and
  * orderChange are not handled here. A value of 0 means "not guaranteed": no-op.
  */
-export function applyEffect(s: BattleState, e: Effect, v: LevelVal, casterKey: string | null, targetKey?: string): void {
+export function applyEffect(d: { front: Front }, e: Effect, v: LevelVal, casterKey: string | null, targetKey?: string): void {
   if (v.value === 0 || e.kind === 'orderChange') return;
-  let targets: Unit[];
+  const f = d.front;
+  const on = (i: number) => { f[i] = effectOn(f[i]!, e, v); };
   switch (e.target) {
     case 'self':
       if (casterKey === null) throw new Error('self target without a caster');
-      targets = [frontUnit(s, casterKey)]; break;
-    case 'ptAll': targets = aliveFront(s); break;
+      on(frontIndex(f, casterKey)); return;
+    case 'ptAll':
+      for (let i = 0; i < f.length; i++) if (f[i]) on(i);
+      return;
     case 'ptOther':
       if (casterKey === null) throw new Error('ptOther target without a caster');
-      targets = aliveFront(s).filter((u) => u.key !== casterKey); break;
+      for (let i = 0; i < f.length; i++) if (f[i] && f[i]!.key !== casterKey) on(i);
+      return;
     case 'ptOne':
       if (targetKey === undefined) throw new Error('ptOne effect needs a target');
-      targets = [frontUnit(s, targetKey)]; break;
+      on(frontIndex(f, targetKey)); return;
     default: return; // enemy / enemyAll: not modelled (only helpful debuffs reach here)
-  }
-  for (const u of targets) {
-    if (e.kind === 'gainNp') u.gauge = Math.min(GAUGE_CAP, u.gauge + v.value);
-    else if (e.kind === 'shortenSkill') u.cd = [Math.max(0, u.cd[0] - v.value), Math.max(0, u.cd[1] - v.value), Math.max(0, u.cd[2] - v.value)];
-    else if (isBuffKind(e.kind)) u.buffs.push(toBuff(e, v));
   }
 }
 
 // --- battle --------------------------------------------------------------
 
-export function initBattle(members: TeamMember[], mc: CompactMC, _mcLv: number, quest: Quest): BattleState {
+const inRange = (v: number, lo: number, hi: number, what: string) => {
+  if (!Number.isInteger(v) || v < lo || v > hi) throw new Error(`${what} out of range: ${v} (expected ${lo}..${hi})`);
+};
+
+export function initBattle(members: readonly TeamMember[], mc: CompactMC, mcLv: number, quest: Quest, constants: Constants): BattleState {
+  inRange(mcLv, 1, 10, 'mcLv');
   const units = members.map((m): Unit => {
+    const what = (f: string) => `${m.key}.${f}`;
+    inRange(m.lv, 1, m.svt.atkGrowth.length, what('lv'));
+    inRange(m.npLv, 1, 5, what('npLv'));
+    m.skillLv.forEach((l, i) => inRange(l, 1, 10, what(`skillLv[${i}]`)));
+    inRange(m.append2Lv, 0, m.svt.append2.length, what('append2Lv'));
+    if (m.ce) inRange(m.ceLv, 1, m.ce.atkGrowth.length, what('ceLv'));
+
     const buffs: Buff[] = [];
-    let gauge = m.append2Lv > 0 ? m.svt.append2[m.append2Lv - 1] ?? 0 : 0;
+    let gauge = m.append2Lv > 0 ? m.svt.append2[m.append2Lv - 1] : 0;
     // Passives and CEs use index 0. Only self-targeted ones are applied: a
     // party-wide passive/CE effect is skipped (conservative, they only help).
     for (const e of m.svt.passives) {
       const v = e.lv[0];
-      if (v && v.value !== 0 && v.turns === -1 && e.target === 'self' && isBuffKind(e.kind)) buffs.push(toBuff(e, v));
+      if (v && v.value !== 0 && v.turns === -1 && e.target === 'self' && isBuffKind(e.kind)) buffs.push(toBuff(e, e.kind, v));
     }
     if (m.ce) {
       for (const e of m.ceMlb ? m.ce.effectsMlb : m.ce.effects) {
         const v = e.lv[0];
         if (!v || v.value === 0 || e.target !== 'self') continue;
         if (e.kind === 'gainNp') gauge += v.value;
-        else if (isBuffKind(e.kind)) buffs.push(toBuff(e, v));
+        else if (isBuffKind(e.kind)) buffs.push(toBuff(e, e.kind, v));
       }
     }
     return {
-      key: m.key, svt: m.svt, lv: m.lv, npLv: m.npLv, skillLv: m.skillLv,
+      key: m.key, svt: m.svt, lv: m.lv, npLv: m.npLv, skillLv: [...m.skillLv],
       atk: m.svt.atkGrowth[m.lv - 1] + m.fou + (m.ce ? m.ce.atkGrowth[m.ceLv - 1] : 0),
-      gauge: Math.min(GAUGE_CAP, gauge), cd: [0, 0, 0], buffs,
+      gauge: Math.min(gaugeCap(m.npLv), gauge), cd: [0, 0, 0], buffs,
     };
   });
+  const enemies = quest.waves[0];
   return {
     turn: 1, wave: 0,
     front: units.slice(0, 3), back: units.slice(3),
-    enemies: quest.waves[0].map((e) => ({ ...e })),
-    mcCd: mc.skills.map(() => 0), swapped: false,
+    enemies, mcCd: mc.skills.map(() => 0), swapped: false,
+    aff: affTable(constants, units, enemies),
   };
 }
 
-export function useSkill(state: BattleState, unitKey: string, num: number, targetKey?: string): BattleState {
-  const s = cloneState(state);
-  const u = frontUnit(s, unitKey);
+export function useSkill(state: BattleState, unitKey: string, num: 1 | 2 | 3, targetKey?: string): BattleState {
+  const d = draft(state);
+  const ui = frontIndex(d.front, unitKey);
+  const u = d.front[ui]!;
   const skill = u.svt.skills.find((k) => k.num === num);
   if (!skill) throw new Error(`${unitKey} has no skill ${num}`);
   const i = num - 1;
   if (u.cd[i] > 0) throw new Error(`${unitKey} skill ${num} is on cooldown`);
   const idx = u.skillLv[i] - 1;
-  for (const e of skill.effects) applyEffect(s, e, e.lv[idx], unitKey, targetKey);
-  u.cd[i] = skill.cooldown[idx];
-  return s;
+  for (const e of skill.effects) applyEffect(d, e, e.lv[idx], unitKey, targetKey);
+  const after = d.front[ui]!;
+  const cd: [number, number, number] = [after.cd[0], after.cd[1], after.cd[2]];
+  cd[i] = skill.cooldown[idx];
+  d.front[ui] = { ...after, cd };
+  return d;
 }
 
 /** index is 0-based (mc.skills[index], mcCd[index]). swap = [frontIdx, backIdx] for order change. */
@@ -157,23 +207,38 @@ export function useMc(state: BattleState, index: number, mc: CompactMC, mcLv: nu
   const skill = mc.skills[index];
   if (!skill) throw new Error(`MC has no skill ${index}`);
   if (state.mcCd[index] > 0) throw new Error(`MC skill ${index} is on cooldown`);
-  const s = cloneState(state);
+  inRange(mcLv, 1, skill.cooldown.length, 'mcLv');
+  const d = draft(state);
   const idx = mcLv - 1;
   for (const e of skill.effects) {
-    if (e.kind !== 'orderChange') { applyEffect(s, e, e.lv[idx], null, targetKey); continue; }
+    if (e.kind !== 'orderChange') { applyEffect(d, e, e.lv[idx], null, targetKey); continue; }
     if (e.lv[idx].value === 0) throw new Error('order change not available at this level');
-    if (s.swapped) throw new Error('order change already used');
+    if (d.swapped) throw new Error('order change already used');
     if (!swap) throw new Error('order change needs a swap');
     const [a, b] = swap;
-    const out = s.front[a];
-    const inn = s.back[b];
+    const out = d.front[a];
+    const inn = d.back[b];
     if (!out || !inn) throw new Error('invalid order change slots');
-    s.front[a] = inn;
-    s.back[b] = out;
-    s.swapped = true;
+    const back = d.back.slice();
+    d.front[a] = inn;
+    back[b] = out;
+    d.back = back;
+    d.swapped = true;
   }
-  s.mcCd[index] = skill.cooldown[idx];
-  return s;
+  const mcCd = d.mcCd.slice();
+  mcCd[index] = skill.cooldown[idx];
+  d.mcCd = mcCd;
+  return d;
+}
+
+function tick(u: Unit): Unit {
+  let changed = u.cd[0] > 0 || u.cd[1] > 0 || u.cd[2] > 0;
+  const buffs: Buff[] = [];
+  for (const b of u.buffs) {
+    if (b.turns < 0) buffs.push(b);
+    else { changed = true; if (b.turns > 1) buffs.push({ ...b, turns: b.turns - 1 }); }
+  }
+  return changed ? { ...u, buffs, cd: sub3(u.cd, 1) } : u;
 }
 
 /**
@@ -182,29 +247,19 @@ export function useMc(state: BattleState, index: number, mc: CompactMC, mcLv: nu
  * turn T is active for the NPs of turns T..T+N-1.
  */
 export function endTurn(state: BattleState): BattleState {
-  const s = cloneState(state);
-  for (const u of s.front) {
-    if (!u) continue;
-    const buffs: Buff[] = [];
-    for (const b of u.buffs) {
-      if (b.turns < 0) buffs.push(b);
-      else if (b.turns > 1) buffs.push({ ...b, turns: b.turns - 1 });
-    }
-    u.buffs = buffs;
-    u.cd = [Math.max(0, u.cd[0] - 1), Math.max(0, u.cd[1] - 1), Math.max(0, u.cd[2] - 1)];
-  }
-  s.mcCd = s.mcCd.map((c) => Math.max(0, c - 1));
-  s.turn += 1;
-  return s;
+  return {
+    ...state,
+    front: state.front.map((u) => (u ? tick(u) : null)),
+    mcCd: state.mcCd.some((c) => c > 0) ? state.mcCd.map((c) => Math.max(0, c - 1)) : state.mcCd,
+    turn: state.turn + 1,
+  };
 }
 
-export function nextWave(state: BattleState, quest: Quest): BattleState {
-  const w = quest.waves[state.wave + 1];
-  if (!w) throw new Error('no next wave');
-  const s = cloneState(state);
-  s.wave += 1;
-  s.enemies = w.map((e) => ({ ...e }));
-  return s;
+export function nextWave(state: BattleState, quest: Quest, constants: Constants): BattleState {
+  const enemies = quest.waves[state.wave + 1];
+  if (!enemies) throw new Error('no next wave');
+  const units = [...state.front.filter((u): u is Unit => u !== null), ...state.back];
+  return { ...state, wave: state.wave + 1, enemies, aff: affTable(constants, units, enemies) };
 }
 
 /** True when the buff counts for this card against this enemy. */
@@ -222,9 +277,6 @@ export function buffApplies(b: Buff, enemy: Enemy, card: Card): boolean {
  */
 export function mods(unit: Unit, enemy: Enemy, card: Card): Mods {
   const m: Mods = { atkMod: 0, cardMod: 0, npDmgMod: 0, powerMod: 0, npGainMod: 0, ocUp: 0, dmgPlus: 0 };
-  for (const b of unit.buffs) {
-    const f = MOD_FIELD[b.kind];
-    if (f && buffApplies(b, enemy, card)) m[f] += b.value;
-  }
+  for (const b of unit.buffs) if (buffApplies(b, enemy, card)) m[MOD_FIELD[b.kind]] += b.value;
   return m;
 }
