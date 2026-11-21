@@ -3,6 +3,7 @@
 // Node 24's built-in type stripping (no flag, no tsx).
 import { writeFile, readFile, mkdir, stat } from 'node:fs/promises';
 import { compactServant, compactCE, compactMC, triggerSkillIds } from '../src/data/compact.ts';
+import { buildClassConstants, classGaps } from '../src/data/constants.ts';
 
 const BASE = 'https://api.atlasacademy.io';
 const REGIONS = ['NA', 'JP'];
@@ -143,10 +144,25 @@ async function buildRegion(region) {
   await write('mcs.json', mcs);
 
   console.log(`[${region}] constants`);
-  const classAtk = namedKeys(await get(`/export/${region}/NiceClassAttackRate.json`));
-  const classRel = namedKeys(await get(`/export/${region}/NiceClassRelation.json`));
+  // classAtk from NiceClass.attackRate; missing classRel pairs filled through
+  // relationId (see src/data/constants.ts).
+  const classInfo = await get(`/export/${region}/NiceClass.json`);
+  const { classAtk, classRel, filled } = buildClassConstants(
+    classInfo,
+    await get(`/export/${region}/NiceClassAttackRate.json`),
+    await get(`/export/${region}/NiceClassRelation.json`),
+  );
   const attrRel = namedKeys(await get(`/export/${region}/NiceAttributeRelation.json`));
   await write('constants.json', { classAtk, classRel, attrRel });
+  // Every servant class must resolve as attacker against every named class an
+  // enemy can have (NiceClass lists them all; per-quest enemy fetches would
+  // cost one request per quest, so the full class list is used instead).
+  // Ids 1000-1006 (OTHER, ALL, EXTRA, MIX, EXTRA1, EXTRA2, 1006) are class
+  // group selectors used in conditions, not classes a unit can have.
+  const isGroup = (c) => c.id >= 1000 && c.id <= 1006;
+  const defenders = classInfo.filter((c) => !isGroup(c)).map((c) => c.className).filter((n) => !/^\d+$/.test(n));
+  const classGapList = classGaps({ classAtk, classRel }, servants.map((s) => s.className), defenders);
+  console.log(`[${region}] class constants: ${Object.keys(classAtk).length} classes, ${filled} relation pairs filled, ${classGapList.length} gaps`);
 
   console.log(`[${region}] quests`);
   const quests = questIndex(await get(`/export/${region}/nice_war.json`));
@@ -161,6 +177,7 @@ async function buildRegion(region) {
     region, written, servants: servants.length, ces: ces.length, mcs: mcs.length,
     questCount: quests.reduce((n, w) => n + w.quests.length, 0), wars: quests.length,
     unsupportedCount: unsupported.length, top: topUnsupported(servants, 15),
+    classGaps: classGapList,
   };
 }
 
@@ -177,6 +194,7 @@ for (const r of results) {
   }
   console.log(`  servants ${r.servants}, CEs ${r.ces}, MCs ${r.mcs}, wars ${r.wars}, quests ${r.questCount}`);
   console.log(`  servants with non-empty unsupported: ${r.unsupportedCount}/${r.servants}`);
+  console.log(`  class constant gaps: ${r.classGaps.length}${r.classGaps.length ? ' e.g. ' + r.classGaps.slice(0, 8).join(', ') : ''}`);
   console.log('  top unsupported types (servant count):');
   for (const [type, n] of r.top) console.log(`    ${String(n).padStart(4)}  ${type}`);
 }
