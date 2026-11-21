@@ -17,7 +17,10 @@ import { npDamage } from '../engine/damage';
 
 export interface BoundCtx {
   quest: Quest; constants: Constants; mc: CompactMC; mcLv: number;
-  swapMcs: readonly number[]; nonSwapMcs: readonly number[]; hasShorten: boolean;
+  swapMcs: readonly number[];
+  /** MC skills counted as buff sources (all of them, see solve.ts). */
+  mcSources: readonly number[];
+  hasShorten: boolean;
 }
 export interface BoundFail { wave: number; missing: number; }
 
@@ -95,7 +98,7 @@ export function damageBound(s: BattleState, c: BoundCtx): BoundFail | null {
           }
         }
       }
-      for (const i of c.nonSwapMcs) {
+      for (const i of c.mcSources) {
         const sk = c.mc.skills[i];
         const n = usesUntil(T, W, s.mcCd[i], sk.cooldown[c.mcLv - 1], c.hasShorten);
         if (n === 0) continue;

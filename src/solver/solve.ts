@@ -52,9 +52,16 @@ import { damageBound, type BoundCtx } from './bound';
  *   wastedCharge): a step that did not change this turn's NPs is better used
  *   next turn, and that line is explored.
  *
+ * Solutions: the line found is replayed, its last turn reduced to the exact
+ * smallest set of steps (exactLastTurn), then the rest greedily (minimize).
+ * Earlier turns need no exact step: their use/skip choices are all explored.
+ *
  * Known gaps (a combo may be missed, never reported wrongly): a skill made
  * ready again within the same turn by a shortenSkill is not reused that turn;
- * at most 3 NPs per turn; the NP-chain overcharge bonus is not modelled.
+ * at most 3 NPs per turn; the NP-chain overcharge bonus is not modelled; two
+ * shorten skills in one turn run in list order (see orderFor); on a solution-
+ * rich last turn only LINES_PER_START lines per start become solutions, and
+ * exactLastTurn falls back to the greedy result past EXACT_CAP evaluations.
  */
 
 export interface Step {
@@ -80,12 +87,20 @@ export interface SolveOptions {
   prune?: boolean;
 }
 export interface SolveStats {
-  nodes: number; memoHits: number; memoSize: number; npFires: number; boundPrunes: number; delayPrunes: number; rawSolutions: number; ms: number;
+  nodes: number; memoHits: number; memoSize: number; npFires: number; boundPrunes: number; delayPrunes: number; rawSolutions: number;
+  /** Solutions dropped because they did not replay (should stay 0). */
+  replayFailures: number;
+  /** Last-turn lines not minimised: LINES_PER_START reached for their start. */
+  skippedLines: number; ms: number;
 }
 export interface SolveResult { solutions: Solution[]; best: Partial | null; exhausted: boolean; stats: SolveStats; }
 
 const MAX_NP_PER_TURN = 3;
 const CHECK_EVERY = 256;
+/** Max skill subsets tried per solution by exactLastTurn. */
+const EXACT_CAP = 4000;
+/** Last-turn lines turned into solutions per last-turn start and swap choice (see found). */
+const LINES_PER_START = 4;
 
 // --- replay --------------------------------------------------------------
 
@@ -110,6 +125,32 @@ function applyStep(s: BattleState, st: Step, mc: CompactMC, mcLv: number): Battl
   return fireNp(s, st.unit!, st.targetIndex).state;
 }
 
+/**
+ * Why a step cannot run here (the common cases, checked without letting the
+ * engine throw: exceptions are slow and minimisation hits these often), or null.
+ */
+function blocker(s: BattleState, st: Step): string | null {
+  const onFront = (k: string | undefined) => k === undefined || s.front.some((u) => u?.key === k);
+  if (st.kind === 'mc') {
+    if ((s.mcCd[st.num! - 1] ?? 1) > 0) return `MC skill ${st.num} not ready`;
+    if (st.swap && (s.swapped || !s.front[st.swap[0]] || !s.back[st.swap[1]])) return 'order change not possible';
+    return onFront(st.target) ? null : `${st.target} is not on the front line`;
+  }
+  const u = s.front.find((x) => x?.key === st.unit);
+  if (!u) return `${st.unit} is not on the front line`;
+  if (st.kind === 'skill') {
+    if (u.cd[st.num! - 1] > 0) return `${st.unit} skill ${st.num} on cooldown`;
+    return onFront(st.target) ? null : `${st.target} is not on the front line`;
+  }
+  if (u.gauge < 10000) return `${st.unit} NP gauge below 100%`;
+  return allDead(s) ? 'NP fired at a dead wave' : null;
+}
+/** applyStep, or null when the step cannot run. */
+function tryStep(s: BattleState, st: Step, mc: CompactMC, mcLv: number): BattleState | null {
+  if (blocker(s, st)) return null;
+  try { return applyStep(s, st, mc, mcLv); } catch { return null; }
+}
+
 export type Simulation = { ok: true; margins: number[] } | { ok: false; reason: string };
 
 /** Re-runs a solution through the engine; ok when every turn clears its wave. */
@@ -120,7 +161,11 @@ export function simulate(team: readonly TeamMember[], mc: CompactMC, mcLv: numbe
     let s = initBattle(team, mc, mcLv, quest, constants);
     const margins: number[] = [];
     for (let t = 0; t < turns.length; t++) {
-      for (const st of turns[t]) s = applyStep(s, st, mc, mcLv);
+      for (const st of turns[t]) {
+        const why = blocker(s, st);
+        if (why) return { ok: false, reason: why };
+        s = applyStep(s, st, mc, mcLv);
+      }
       if (!allDead(s)) return { ok: false, reason: `wave ${t + 1} not cleared` };
       margins.push(waveMargin(s, quest.waves[t]));
       if (t < turns.length - 1) s = nextWave(endTurn(s), quest, constants);
@@ -167,9 +212,10 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
   const prune = opts.prune ?? true;
   const lastWave = quest.waves.length - 1;
   const mcIdx = mcLv - 1;
-  const stats: SolveStats = { nodes: 0, memoHits: 0, memoSize: 0, npFires: 0, boundPrunes: 0, delayPrunes: 0, rawSolutions: 0, ms: 0 };
+  const stats: SolveStats = { nodes: 0, memoHits: 0, memoSize: 0, npFires: 0, boundPrunes: 0, delayPrunes: 0, rawSolutions: 0, replayFailures: 0, skippedLines: 0, ms: 0 };
   const solutions: Solution[] = [];
   const seen = new Set<string>();
+  const linesPerStart = new Map<string, number>();
   let best: Partial | null = null;
   let stop = false;
   let exhausted = true;
@@ -186,19 +232,26 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
   /**
    * Move order for a front line: moves with NP charge first (then list order),
    * so the gauge bound in moveNode cuts a line as soon as it skipped too much
-   * charge. A function of the slot-ordered front, hence of the exact hash.
+   * charge; moves with shortenSkill last of all. The engine sets a skill's
+   * cooldown when it is used, so a shorten applied before another skill of the
+   * same turn would be wasted on it. Residual gap: between two shorten moves
+   * the list order still decides, so the first one used does not cut the
+   * cooldown of the second. A function of the slot-ordered front, hence of the
+   * exact hash.
    */
   const orders = new Map<string, Move[]>();
-  const charges = (s: BattleState, m: Move) => {
-    if (m.kind === 'mc') return mc.skills[m.index].effects.some((e) => e.kind === 'gainNp');
-    const u = s.front[m.slot];
-    return !!u?.svt.skills.find((k) => k.num === m.num)?.effects.some((e) => e.kind === 'gainNp');
-  };
+  const effectsOf = (s: BattleState, m: Move): readonly Effect[] =>
+    m.kind === 'mc' ? mc.skills[m.index].effects : s.front[m.slot]?.svt.skills.find((k) => k.num === m.num)?.effects ?? [];
+  const has = (s: BattleState, m: Move, kind: Effect['kind']) => effectsOf(s, m).some((e) => e.kind === kind);
   const orderFor = (s: BattleState): Move[] => {
     const key = s.front.map((u) => u?.key ?? '-').join('/');
     let o = orders.get(key);
     if (!o) {
-      o = [...moves.filter((m) => charges(s, m)), ...moves.filter((m) => !charges(s, m))];
+      const plain = moves.filter((m) => !has(s, m, 'shortenSkill'));
+      o = [
+        ...plain.filter((m) => has(s, m, 'gainNp')), ...plain.filter((m) => !has(s, m, 'gainNp')),
+        ...moves.filter((m) => has(s, m, 'shortenSkill')),
+      ];
       orders.set(key, o);
     }
     return o;
@@ -225,7 +278,10 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
   ])].some((es) => es.some((e) => e.kind === 'shortenSkill'));
   const boundCtx: BoundCtx = {
     quest, constants, mc, mcLv, swapMcs, hasShorten,
-    nonSwapMcs: moves.flatMap((m) => (m.kind === 'mc' ? [m.index] : [])),
+    // Every MC skill is a buff source, the order-change ones included: their
+    // orderChange effect is not a damage kind and is ignored, and any buff
+    // they also carry counts.
+    mcSources: mc.skills.map((_, i) => i),
   };
   // Some NP gives NP charge to other units (see wastedCharge).
   const partyChargeNp = team.some((m) => m.svt.np?.extra.some((e) => e.kind === 'gainNp' && e.target !== 'self'));
@@ -294,6 +350,14 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
     return h;
   };
 
+  /*
+   * Memo notes. A hit skips the subtree: its Partials were recorded on the
+   * first visit and its solutions found then. Equal states have used the same
+   * skills (up to identical builds: a used skill keeps a cooldown > 0 in the
+   * hash), so the skipped line had the same action count so far. At memoCap
+   * the map is cleared, which only costs re-exploration; `seen` deduplicates
+   * the solutions. The memo lives for one solve() call.
+   */
   const memo = new Map<string, true>();
   const visit = (key: string): boolean => {
     if (memo.has(key)) { stats.memoHits++; return false; }
@@ -488,8 +552,9 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
 
   /**
    * Gauge bound: 0 when some front shooter can still reach 100% this turn with
-   * the charge left in order[pos..] (and the party charge other NPs could give
-   * first), else the smallest shortfall. No NP this turn means no clear.
+   * the charge left in order[pos..], else the smallest shortfall. No NP this
+   * turn means no clear. Charge from another NP's extras needs that unit to
+   * fire first, and a unit that can fire already makes the result 0.
    */
   function gaugeShortfall(s: BattleState, pos: number, moves: readonly Move[]): number {
     let best = Infinity;
@@ -505,14 +570,6 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
           if (sk) need -= chargeTo(sk.effects, c.skillLv[m.num - 1] - 1, c.key, u);
         } else if (s.mcCd[m.index] === 0) {
           need -= chargeTo(mc.skills[m.index].effects, mcIdx, null, u);
-        }
-      }
-      for (const o of s.front) {
-        if (need <= 0) break;
-        if (!o?.svt.np || o === u || o.gauge < 10000) continue;
-        for (const e of o.svt.np.extra) {
-          if (e.kind !== 'gainNp' || (e.target !== 'ptAll' && e.target !== 'ptOther')) continue;
-          need -= Math.max(...(e.oc ?? [e.lv]).map((row) => row[o.npLv - 1]?.value ?? 0));
         }
       }
       if (need <= 0) return 0;
@@ -634,7 +691,8 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
       // not clear, or a memo hit cut it short; either way, no prune (safe).
       let w = clears.get(stepsKey(steps, i));
       if (!w) continue;
-      try { w = applyStep(w, x, mc, mcLv); } catch { continue; }
+      w = tryStep(w, x, mc, mcLv) ?? undefined;
+      if (!w) continue;
       if (!sameGauges(w, end)) continue; // cheap reject before hashing
       endHash ??= partyHash(end);
       if (partyHash(w) === endHash) return true;
@@ -694,10 +752,15 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
 
   const sim = (turns: Step[][]) => simulate(team, mc, mcLv, quest, constants, turns);
 
-  /** Drops skill/MC steps one at a time while the solution still clears. */
+  /**
+   * Greedy: drops skill/MC steps one at a time while the solution still
+   * clears. Not exact on its own (two half charges can each be needed once a
+   * full one is gone), hence exactLastTurn. Stops early, keeping the current
+   * valid solution, when time runs out or the search is cancelled.
+   */
   function minimize(turns: Step[][]): Step[][] {
     let changed = true;
-    while (changed) {
+    while (changed && !tick()) {
       changed = false;
       outer: for (let t = 0; t < turns.length; t++) {
         for (let i = 0; i < turns[t].length; i++) {
@@ -710,14 +773,121 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
     return turns;
   }
 
+  /**
+   * Exact minimum for the last turn, given the earlier turns: the smallest
+   * subset of its skill/MC steps (kept in their order, any ally target for a
+   * targeted one) for which some NP sequence clears, tried by increasing size below `below`
+   * (the greedy count). Run on the raw search line, before greedy can drop a
+   * step the minimum needs. Null when nothing smaller exists. More of these steps only makes clearing easier (they are all
+   * helpful), and the forced last turn used every relevant skill, so the true
+   * minimum of the last turn from this start (for this swap choice) is among
+   * them, whatever targets and NPs the line itself took. Gives up (null) after
+   * EXACT_CAP evaluations.
+   */
+  function exactLastTurn(turns: Step[][], below: number): Step[][] | null {
+    const L = turns.length - 1;
+    const steps = turns[L].filter((x) => x.kind !== 'np');
+    let start: BattleState;
+    try {
+      start = initBattle(team, mc, mcLv, quest, constants);
+      for (let t = 0; t < L; t++) {
+        for (const st of turns[t]) start = applyStep(start, st, mc, mcLv);
+        start = nextWave(endTurn(start), quest, constants);
+      }
+    } catch { return null; }
+    // Target choices: the line's own, or any unit with a damaging NP that can be
+    // on the field this turn (tryStep rejects one that is not there yet).
+    const incoming = steps.find((x) => x.swap)?.swap;
+    const shooters = [...start.front, ...(incoming ? [start.back[incoming[1]]] : [])]
+      .flatMap((u) => (u?.svt.np ? [u.key] : []));
+    const choices = steps.map((x) => (x.target === undefined ? [x]
+      : [x, ...shooters.filter((k) => k !== x.target).map((target) => ({ ...x, target }))]));
+    let evals = 0;
+    const picked: number[] = [];
+    const chosen: Step[] = [];
+    const tryPicked = (s: BattleState, j: number): Step[] | null => {
+      if (j === picked.length) {
+        evals++;
+        const nps = clearingNps(s, 0, 0);
+        return nps ? [...chosen, ...nps] : null;
+      }
+      for (const st of choices[picked[j]]) {
+        if (evals >= EXACT_CAP) return null;
+        const n = tryStep(s, st, mc, mcLv);
+        if (!n) continue;
+        chosen.push(st);
+        const r = tryPicked(n, j + 1);
+        chosen.pop();
+        if (r) return r;
+      }
+      return null;
+    };
+    const combos = (from: number, left: number): Step[] | null => {
+      if (left === 0) return tryPicked(start, 0);
+      for (let i = from; i <= steps.length - left && evals < EXACT_CAP; i++) {
+        picked.push(i);
+        const r = combos(i + 1, left - 1);
+        picked.pop();
+        if (r) return r;
+      }
+      return null;
+    };
+    for (let size = 0; size < Math.min(below, steps.length) && evals < EXACT_CAP; size++) {
+      const r = combos(0, size);
+      if (r) return [...turns.slice(0, L), r];
+    }
+    return null;
+  }
+
+  /** Some NP sequence (up to 3 distinct units, any targets) that clears s, or null. */
+  function clearingNps(s: BattleState, used: number, depth: number): Step[] | null {
+    if (depth >= MAX_NP_PER_TURN) return null;
+    for (let slot = 0; slot < s.front.length; slot++) {
+      const u = s.front[slot];
+      if (!u || !u.svt.np || used & (1 << slot) || u.gauge < 10000) continue;
+      const living = s.enemies.flatMap((e, i) => (e.hp > 0 ? [i] : []));
+      const targets: (number | undefined)[] = u.svt.np.aoe || living.length === 1 ? [undefined] : living;
+      for (const ti of targets) {
+        const r = fireNp(s, u.key, ti);
+        const step: Step = { kind: 'np', unit: u.key, ...(ti !== undefined && { targetIndex: ti }) };
+        if (r.killedAll) return [step];
+        const rest = clearingNps(r.state, used | (1 << slot), depth + 1);
+        if (rest) return [step, ...rest];
+      }
+    }
+    return null;
+  }
+
+  /**
+   * A line reached the end. maxSolutions keeps the first N distinct solutions
+   * in DFS order (skip first, so lines with fewer actions tend to come early),
+   * not the best N: the returned list is sorted, but a better solution may lie
+   * in the part of the tree left unexplored.
+   */
   function found(): void {
     stats.rawSolutions++;
-    const turns = minimize(path.map((t) => t.slice()));
+    const raw = path.map((t) => t.slice());
+    // The forced last turn yields one line per target and NP choice; the first
+    // line from a last-turn start (and swap choice) already gives that start's
+    // exact minimum (exactLastTurn tries every target and NP sequence). A few
+    // more are kept as alternatives, the rest skipped.
+    const sw = raw[raw.length - 1].find((x) => x.swap);
+    const startKey = stateHash(turnStarts[turnStarts.length - 1], true) + (sw ? stepKey(sw) : '-');
+    const nth = linesPerStart.get(startKey) ?? 0;
+    linesPerStart.set(startKey, nth + 1);
+    if (nth >= LINES_PER_START) { stats.skippedLines++; return; }
+    // Defensive: the search line must replay. It always should; if it does
+    // not, count it and skip it instead of aborting the search.
+    if (!sim(raw).ok) { stats.replayFailures++; return; }
+    const greedy = minimize(raw);
+    const lastCount = greedy[greedy.length - 1].filter((x) => x.kind !== 'np').length;
+    const exact = nth === 0 ? exactLastTurn(raw, lastCount) : null;
+    const turns = exact ? minimize(exact) : greedy;
     const key = JSON.stringify(turns);
     if (seen.has(key)) return;
     seen.add(key);
     const r = sim(turns);
-    if (!r.ok) throw new Error(`solver produced an invalid solution: ${r.reason}`);
+    if (!r.ok) { stats.replayFailures++; return; }
     const steps = turns.flat();
     const sol: Solution = {
       turns, margins: r.margins,
@@ -726,6 +896,7 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
     };
     solutions.push(sol);
     opts.onSolution?.(sol);
+    if (opts.cancel?.cancelled) { stop = true; exhausted = false; }
     if (opts.maxSolutions !== undefined && solutions.length >= opts.maxSolutions) { stop = true; exhausted = false; }
   }
 
