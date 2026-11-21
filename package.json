@@ -7,7 +7,6 @@
     "dev": "vite",
     "data": "node scripts/build-data.mjs",
     "build": "npm run data && tsc -b && vite build",
-    "build:app": "tsc -b && vite build",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "oxlint",
