@@ -59,8 +59,10 @@ export function convertFunctions(funcs: any[], unsupported: string[]): Effect[] 
       const self: number[] = (b.ckSelfIndv ?? []).map((t: any) => t.id);
       const op: number[] = (b.ckOpIndv ?? []).map((t: any) => t.id);
       if (kind === 'cardUp') {
-        const cards = self.map((id) => CARD_BY_TRAIT[id]).filter(Boolean);
-        if (cards.length !== self.length || !cards.length) { unsupported.push('ckSelfIndv:' + b.type); continue; }
+        // Empty ckSelfIndv = unconditioned: applies to every card, NP card included.
+        const cards = self.length ? self.map((id) => CARD_BY_TRAIT[id]).filter(Boolean)
+          : (['arts', 'buster', 'quick'] as Card[]);
+        if (cards.length !== self.length && self.length) { unsupported.push('ckSelfIndv:' + b.type); continue; }
         e.cards = cards;
       } else if (self.length) { unsupported.push('ckSelfIndv:' + b.type); continue; }
       if (op.length) e.opTraits = op;

@@ -3,7 +3,7 @@ import castoria from '../../test/fixtures/castoria.json';
 import altria from '../../test/fixtures/altria.json';
 import kscope from '../../test/fixtures/kaleidoscope.json';
 import mcCombat from '../../test/fixtures/mc-combat.json';
-import { compactServant, compactCE, compactMC } from './compact';
+import { compactServant, compactCE, compactMC, convertFunctions } from './compact';
 
 describe('compactServant', () => {
   it('Castoria: S1 atkUp ptAll 20% 3 turns at lv10, gainNp 30%', () => {
@@ -46,6 +46,25 @@ describe('compactServant', () => {
     expect(s.passives).toHaveLength(1);
     expect(s.passives[0]).toMatchObject({ kind: 'cardUp', target: 'self', cards: ['quick'] });
     expect(s.np!.extra.map((e) => e.kind)).toEqual(['gainNp']);
+  });
+});
+
+describe('convertFunctions', () => {
+  const cardUpFn = (ckSelfIndv: { id: number }[]) => ({
+    funcType: 'addStateShort', funcTargetType: 'self',
+    buffs: [{ type: 'upCommandall', ckSelfIndv, ckOpIndv: [] }],
+    svals: [{ Rate: 1000, Turn: 3, Count: -1, Value: 200 }],
+  });
+  it('upCommandall with empty ckSelfIndv applies to all cards', () => {
+    const unsupported: string[] = [];
+    const [e] = convertFunctions([cardUpFn([])], unsupported);
+    expect(e).toMatchObject({ kind: 'cardUp', target: 'self', cards: ['arts', 'buster', 'quick'] });
+    expect(unsupported).toEqual([]);
+  });
+  it('upCommandall conditioned on a non-card trait is unsupported', () => {
+    const unsupported: string[] = [];
+    expect(convertFunctions([cardUpFn([{ id: 4001 }, { id: 9999 }])], unsupported)).toEqual([]);
+    expect(unsupported).toEqual(['ckSelfIndv:upCommandall']);
   });
 });
 
