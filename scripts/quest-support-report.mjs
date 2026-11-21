@@ -32,10 +32,9 @@ async function quest(id, phase) {
 /** Reason without wave number and enemy / skill names, for grouping. */
 function normalize(r) {
   if (/reinforcements/.test(r)) return r.replace(/^wave \d+: /, '').replace(/\(.*\)/, '').trim();
-  const m = /^wave \d+(?: (.*?))?(?: (passive|skill)(?: [^:]*)?)?: (.*)$/.exec(r);
-  if (!m) return r;
-  let rest = m[3].replace(/\(.*\)/, '').trim();
-  return m[2] ? `${m[2]}: ${rest}` : rest;
+  const p = / (passive|skill)(?: [^:]*)?: (.*)$/.exec(r);
+  if (p) return `${p[1]}: ${p[2]}`;
+  return r.replace(/^wave \d+: /, '').replace(/\(.*\)/, '').trim();
 }
 
 const wars = JSON.parse(await readFile('public/data/NA/quests.json', 'utf8'));
