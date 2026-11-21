@@ -379,6 +379,13 @@ function npOf(svt: any, unsupported: string[], base: ConvOpts): NoblePhantasm | 
   };
 }
 
+/** Icon URL (Atlas CDN, never re-hosted) from an extraAssets face map:
+ *  the "1" key (first ascension) when present, else the first entry. */
+export function faceOf(faces: Record<string, string> | undefined): string {
+  if (!faces) return '';
+  return faces['1'] ?? Object.values(faces)[0] ?? '';
+}
+
 /** `triggers`: skills run by trigger buffs (built by scripts/build-data.mjs).
  *  Without it, trigger buffs other than the on-hit ones are unsupported. */
 export function compactServant(svt: any, triggers?: TriggerLookup): CompactServant {
@@ -396,6 +403,7 @@ export function compactServant(svt: any, triggers?: TriggerLookup): CompactServa
   const append2 = svt.appendPassive?.find((a: any) => a.num === 101)?.skill;
   return {
     id: svt.id, collectionNo: svt.collectionNo, name: svt.name,
+    face: faceOf(svt.extraAssets?.faces?.ascension),
     className: svt.className, attribute: svt.attribute, traits: svt.traits.map((t: any) => t.id),
     atkGrowth: svt.atkGrowth,
     skills: skillsOf(svt.skills, unsupported, base),
@@ -412,7 +420,8 @@ export function compactCE(ce: any, triggers?: TriggerLookup): CompactCE {
   const mlb = ce.skills.filter((s: any) => s.condLimitCount === 4);
   const conv = (ss: any[]) => ss.flatMap((s) => convertFunctions(s.functions, unsupported, { triggers }));
   return {
-    id: ce.id, collectionNo: ce.collectionNo, name: ce.name, atkGrowth: ce.atkGrowth,
+    id: ce.id, collectionNo: ce.collectionNo, name: ce.name, face: faceOf(ce.extraAssets?.faces?.equip),
+    atkGrowth: ce.atkGrowth,
     effects: conv(base), effectsMlb: mlb.length ? conv(mlb) : conv(base),
     unsupported: [...new Set(unsupported)],
   };

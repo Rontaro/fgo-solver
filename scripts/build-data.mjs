@@ -91,6 +91,7 @@ function questIndex(wars) {
         if (!QUEST_TYPES.has(q.type)) continue;
         quests.push({
           id: q.id, name: q.name, type: q.type, phases: q.phases,
+          ...(spot.name && { spot: spot.name }),
           openedAt: q.openedAt, closedAt: q.closedAt,
         });
       }

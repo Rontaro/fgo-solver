@@ -11,7 +11,7 @@ import koyanskaya from '../../test/fixtures/koyanskaya-light.json';
 import superOrion from '../../test/fixtures/super-orion.json';
 import skill966533 from '../../test/fixtures/skill-966533.json';
 import skill964095 from '../../test/fixtures/skill-964095.json';
-import { compactServant, compactCE, compactMC, convertFunctions } from './compact';
+import { compactServant, compactCE, compactMC, convertFunctions, faceOf } from './compact';
 
 describe('compactServant', () => {
   it('Castoria: S1 atkUp ptAll 20% 3 turns at lv10, gainNp 30%', () => {
@@ -393,5 +393,20 @@ describe('compactMC', () => {
     expect(mc.skills[2].effects.find((e) => e.kind === 'orderChange')!.target).toBe('orderChange');
     expect(mc.skills[1].effects).toEqual([]);
     expect(mc.unsupported).toEqual([]);
+  });
+});
+
+describe('face icons', () => {
+  it('servant: first-ascension face URL from extraAssets', () => {
+    expect(compactServant(castoria as any).face).toBe('https://static.atlasacademy.io/NA/Faces/f_5045000.png');
+  });
+  it('CE: equip face URL', () => {
+    expect(compactCE(kscope as any).face).toBe('https://static.atlasacademy.io/NA/Faces/f_94003400.png');
+  });
+  it('faceOf: "1" key, else first entry, else empty', () => {
+    expect(faceOf({ '2': 'b', '1': 'a' })).toBe('a');
+    expect(faceOf({ '3': 'c' })).toBe('c');
+    expect(faceOf({})).toBe('');
+    expect(faceOf(undefined)).toBe('');
   });
 });

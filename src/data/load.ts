@@ -21,7 +21,10 @@ interface CachedData {
   quests: QuestWar[];
 }
 
-const cacheKey = (region: Region) => `data:${region}`;
+// Bumped when the compact format changes (2: face icons, quest spot names), so
+// data cached under the same Atlas hash is refetched.
+const SCHEMA = 2;
+const cacheKey = (region: Region) => `data:v${SCHEMA}:${region}`;
 
 async function fetchJson<T>(region: Region, file: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`/data/${region}/${file}`, init);
@@ -42,7 +45,7 @@ async function fetchAll(region: Region): Promise<CachedData> {
   const cached = await get<CachedData>(cacheKey(region));
   if (cached && cached.version.hash === version.hash) return cached;
   // The hash is part of the URL so a new data version never hits a stale HTTP cache.
-  const q = `?v=${encodeURIComponent(version.hash)}`;
+  const q = `?v=${encodeURIComponent(version.hash)}-${SCHEMA}`;
   const [servants, ces, mcs, constants, quests] = await Promise.all([
     fetchJson<CompactServant[]>(region, `servants.json${q}`),
     fetchJson<CompactCE[]>(region, `ces.json${q}`),

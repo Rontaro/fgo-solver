@@ -40,6 +40,7 @@ export interface NoblePhantasm {
 
 export interface CompactServant {
   id: number; collectionNo: number; name: string;
+  face: string;            // icon URL on the Atlas CDN ('' if none)
   className: string; attribute: string; traits: number[];
   atkGrowth: number[];
   skills: Skill[];
@@ -51,6 +52,7 @@ export interface CompactServant {
 
 export interface CompactCE {
   id: number; collectionNo: number; name: string;
+  face: string;            // icon URL on the Atlas CDN ('' if none)
   atkGrowth: number[];
   effects: Effect[];
   effectsMlb: Effect[];
@@ -67,6 +69,7 @@ export interface Constants {
 
 export interface QuestEntry {
   id: number; name: string; type: string; phases: number[];
+  spot?: string;           // map spot name, when the war has one
   openedAt: number; closedAt: number;
 }
 
