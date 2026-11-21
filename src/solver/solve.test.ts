@@ -380,3 +380,56 @@ describe('solve: random instances against brute force', () => {
     expect(results.filter((b) => b === Infinity).length).toBeGreaterThanOrEqual(3);
   });
 });
+
+describe('solve: reinforcements', () => {
+  const lay = (field: number[], reserve: number[], refill: number[]) => ({ field, reserve, refill });
+  const waves = (...hps: number[][]) => hps.map((w) => w.map((hp) => enemy(hp)));
+  const st = (key: string) => member({ ...altria, np: { ...altria.np!, aoe: false } }, key, { npLv: 5, ce: kaleidoscope, ceLv: 100, ceMlb: true });
+
+  it('a 4-enemy wave on 3 slots needs 2 AoE NPs in one turn', () => {
+    const q: Quest = { waves: waves([3000, 3000, 3000, 3000]), layouts: [lay([0, 1, 2], [3], [0, 1, 2])] };
+    const two = [altK('a'), altK('b')];
+    expect(againstBrute(two, q, mcCombat)).toBe(0);
+    const sol = run(two, mcCombat, q).solutions[0];
+    expect(sol.turns[0].map((x) => x.kind)).toEqual(['np', 'np']);
+    // One shooter only clears the field: the reserve is still alive.
+    expect(againstBrute([altK('a')], q, mcCombat)).toBe(Infinity);
+    // Same HP with no reserve: one NP is enough.
+    expect(againstBrute([altK('a')], { waves: waves([3000, 3000, 3000]) }, mcCombat)).toBe(0);
+  });
+  it('charge for a second shooter on a later wave with a reserve', () => {
+    // Wave 2: 5 enemies on 3 slots (slot 0 empty until the first refill).
+    const q: Quest = {
+      waves: waves([3000], [3000, 3000, 3000, 3000]),
+      layouts: [undefined, lay([-1, 0, 1], [2, 3], [0, 1, 2])],
+    };
+    const s = supp(9401, skill(1, 7, eff('gainNp', 'ptOne', 10000)), skill(2, 7, eff('gainNp', 'ptOne', 8000)));
+    const team = [altK('a'), member({ ...altria, id: 9402, skills: [] }, 'b', { npLv: 5 }), member(s, 's')];
+    expect(againstBrute(team, q, mcCombat)).toBeLessThan(Infinity);
+  });
+  it('single-target NPs aim at field slots, one per refill', () => {
+    // One slot, two in reserve: three ST NPs, slot 0 every time.
+    const q: Quest = { waves: waves([3000, 3000, 3000]), layouts: [lay([0], [1, 2], [0])] };
+    const team = [st('a'), st('b'), st('c')];
+    expect(againstBrute(team, q, mcCombat)).toBe(0);
+    const r = run(team, mcCombat, q);
+    expect(r.solutions[0].turns[0]).toHaveLength(3);
+    // A fourth enemy needs a fourth NP: out of reach, cut by the damage bound.
+    const q4: Quest = { waves: waves([3000, 3000, 3000, 3000]), layouts: [lay([0], [1, 2, 3], [0])] };
+    expect(againstBrute(team, q4, mcCombat)).toBe(Infinity);
+    const r4 = run(team, mcCombat, q4);
+    expect(r4.exhausted).toBe(true);
+    expect(r4.stats.boundPrunes).toBeGreaterThan(0);
+    expect(r4.stats.npFires).toBe(0);
+  });
+  it('two ST shooters on two slots with a reserve of one, prunes on and off agree', () => {
+    const q: Quest = { waves: waves([3000, 3000, 3000]), layouts: [lay([0, 1], [2], [0, 1])] };
+    const team = [st('a'), st('b'), st('c')];
+    expect(againstBrute(team, q, mcCombat)).toBe(0);
+    for (const prune of [true, false]) {
+      const r = run(team, mcCombat, q, { prune });
+      expect(r.solutions[0].actions).toBe(0);
+      checkSolutions(team, mcCombat, q, r.solutions);
+    }
+  });
+});

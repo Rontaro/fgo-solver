@@ -278,6 +278,18 @@ describe('nextWave', () => {
     expect(s.aff.alt[0]).toEqual({ classAtk: 1000, triangle: 2000, attribute: 1000 });
     expect(() => nextWave(s, prisonRuins, constants)).toThrow();
   });
+  it('places each wave by its layout (default: all on the field, no reserve)', () => {
+    expect(team()).toMatchObject({ field: [0, 1, 2], reserve: [], refill: [0, 1, 2] });
+    const w = [enemy(), enemy(), enemy(), enemy()];
+    const quest = { waves: [w, w], layouts: [undefined, { field: [-1, 0, 1], reserve: [2, 3], refill: [0, 1, 2] }] };
+    const s0 = initBattle([cas()], mcCombat, 10, quest, constants);
+    expect(s0).toMatchObject({ field: [0, 1, 2, 3], reserve: [] });
+    const s1 = nextWave(endTurn(clear(s0)), quest, constants);
+    expect(s1).toMatchObject({ field: [-1, 0, 1], reserve: [2, 3], refill: [0, 1, 2] });
+    // The reserve has full HP: endTurn refuses a wave whose reserve is alive.
+    const fieldDead = { ...s1, enemies: s1.enemies.map((e, i) => (i < 2 ? { ...e, hp: 0 } : e)) };
+    expect(() => endTurn(fieldDead)).toThrow('endTurn with living enemies');
+  });
 });
 
 describe('mods', () => {

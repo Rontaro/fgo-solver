@@ -1,7 +1,7 @@
 import type { Card, CompactMC, Constants, Effect } from '../data/types';
 // The engine's useSkill / useMc are imported as castSkill / castMc: they are not
 // React hooks, and the lint rule goes by the name.
-import { initBattle, useSkill as castSkill, useMc as castMc, endTurn, nextWave, type BattleState, type Buff, type Enemy, type Quest, type TeamMember, type Unit } from '../engine/state';
+import { initBattle, useSkill as castSkill, useMc as castMc, endTurn, nextWave, livingSlots, type BattleState, type Buff, type Enemy, type Quest, type TeamMember, type Unit } from '../engine/state';
 import { fireNp } from '../engine/np';
 import { damageBound, type BoundCtx } from './bound';
 
@@ -12,8 +12,10 @@ import { damageBound, type BoundCtx } from './bound';
  * (front slot 0..2 x skill 1..3, then the MC skills other than order change),
  * so a set of skills is tried once, never as permutations. At the end of the
  * list the NPs fire: every ordered sequence of up to 3 distinct charged front
- * units (a single-target NP tries every living enemy), stopping as soon as the
- * wave dies.
+ * units (a single-target NP tries every living enemy on the field), stopping
+ * as soon as the wave dies. Reinforcements enter after each NP (fireNp), so a
+ * wave with a reserve needs several NPs in the turn; the wave dies when field
+ * and reserve are empty.
  *
  * Order change (once per battle, enforced by the engine): a turn either does
  * not swap, or swaps front slot f with back slot b. A swapping turn first runs
@@ -329,6 +331,8 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
   const backHash = (s: BattleState, canon: boolean) => line(s.swapped
     ? s.back.map((u) => String(buildOf.get(u.key)))
     : s.back.map((u) => unitHash(u, s.wave)), canon);
+  // Enemy HPs and the field layout (which slot each enemy is in) give the
+  // reserve too: an enemy not on the field with full HP has not entered yet.
   const enemyHashes = new WeakMap<readonly Enemy[], string>();
   const enemyHash = (es: readonly Enemy[]) => {
     let h = enemyHashes.get(es);
@@ -346,7 +350,7 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
   const stateHash = (s: BattleState, canon: boolean) => {
     const cache = stateHashes[canon ? 1 : 0];
     let h = cache.get(s);
-    if (h === undefined) { h = `${partyHash(s, canon)}|${enemyHash(s.enemies)}`; cache.set(s, h); }
+    if (h === undefined) { h = `${partyHash(s, canon)}|${enemyHash(s.enemies)}|${s.field.join(',')}`; cache.set(s, h); }
     return h;
   };
 
@@ -643,7 +647,7 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
       const u = s.front[slot];
       if (!u || !u.svt.np || used & (1 << slot) || u.gauge < 10000) continue;
       fired = true;
-      const living = s.enemies.flatMap((e, i) => (e.hp > 0 ? [i] : []));
+      const living = livingSlots(s);
       const targets: (number | undefined)[] = u.svt.np.aoe || living.length === 1 ? [undefined] : living;
       for (const ti of targets) {
         if (tick()) return;
@@ -845,7 +849,7 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
     for (let slot = 0; slot < s.front.length; slot++) {
       const u = s.front[slot];
       if (!u || !u.svt.np || used & (1 << slot) || u.gauge < 10000) continue;
-      const living = s.enemies.flatMap((e, i) => (e.hp > 0 ? [i] : []));
+      const living = livingSlots(s);
       const targets: (number | undefined)[] = u.svt.np.aoe || living.length === 1 ? [undefined] : living;
       for (const ti of targets) {
         const r = fireNp(s, u.key, ti);

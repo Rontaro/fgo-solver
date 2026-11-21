@@ -1,4 +1,4 @@
-import type { Enemy, Quest } from './state';
+import type { Enemy, Quest, WaveLayout } from './state';
 
 // Typed subset of an Atlas Academy quest phase (nice/{region}/quest/{id}/{phase}).
 export interface RawFunc {
@@ -16,10 +16,13 @@ export interface RawEnemy {
   classPassive?: { classPassive?: readonly RawSkill[]; addPassive?: readonly RawSkill[] };
 }
 export interface RawStage {
-  wave: number; enemyFieldPosCount?: number; call?: readonly number[];
+  wave: number; enemyFieldPosCount?: number | null; call?: readonly number[];
+  /** 1-based field slots that are never refilled. */
+  NoEntryIds?: readonly number[] | null;
+  originalScript?: { enemyEntryOrder?: readonly number[] } | null;
   enemies: readonly RawEnemy[];
 }
-export interface RawQuest { stages: readonly RawStage[]; }
+export interface RawQuest { flags?: readonly string[]; stages: readonly RawStage[]; }
 
 export class UnsupportedQuestError extends Error {
   readonly reasons: readonly string[];
@@ -75,34 +78,75 @@ function checkPassive(where: string, funcs: readonly RawFunc[], out: string[]): 
   }
 }
 
+/*
+ * Field and reinforcements, as in Chaldea's battle (_fetchWaveEnemies,
+ * _nextWave, _replenishActors). A wave has enemyFieldPosCount slots (default
+ * 3); an enemy with deckId d <= slots starts in slot d - 1, the others wait in
+ * the reserve in deckId order. Empty slots (dead or never filled) take the next
+ * reserve enemy in slot order, or by ascending
+ * stage.originalScript.enemyEntryOrder[slot] when present, skipping the
+ * NoEntryIds slots. Refills run at the start of every turn (so wave 1 starts
+ * with its empty slots filled; a later wave is placed after that turn-start
+ * refill, its empty slots wait) and, only on quests flagged
+ * enemyImmediateAppear, after every NP (and attack card). Without the flag a
+ * reinforcement enters next turn, so the wave cannot die on the turn it
+ * appears: rejected.
+ */
+function layout(st: RawStage, first: boolean, enemies: readonly RawEnemy[], w: string, out: string[]): WaveLayout | undefined {
+  const slots = st.enemyFieldPosCount ?? 3;
+  const field: number[] = Array.from({ length: slots }, () => -1);
+  const reserve: number[] = [];
+  enemies.forEach((e, i) => {
+    if (e.deckId > slots) reserve.push(i);
+    else if (e.deckId >= 1 && field[e.deckId - 1] < 0) field[e.deckId - 1] = i;
+    else out.push(`${w}: deckId ${e.deckId} is not a free slot (${e.name})`);
+  });
+  if (reserve.length === 0) {
+    // Every enemy in slot i = its index: the default layout.
+    return field.every((x, i) => x === (i < enemies.length ? i : -1)) ? undefined : { field, reserve, refill: [] };
+  }
+  const order = st.originalScript?.enemyEntryOrder;
+  const noEntry = new Set(st.NoEntryIds ?? []);
+  const refill = field.map((_, i) => i)
+    .sort((a, b) => (order ? (order[a] ?? 0) - (order[b] ?? 0) : 0) || a - b)
+    .filter((i) => !noEntry.has(i + 1));
+  if (refill.length === 0) out.push(`${w}: reinforcements with no slot to enter`);
+  let r = 0;
+  if (first) for (const slot of refill) if (field[slot] < 0 && r < reserve.length) field[slot] = reserve[r++];
+  return { field, reserve: reserve.slice(r), refill };
+}
+
 /**
  * Atlas quest phase -> engine quest. Throws UnsupportedQuestError (with every
- * reason) for reinforcements, shift/call/change decks and enemy passives
- * that could reduce our damage or keep an enemy alive.
+ * reason) for reinforcements that only enter next turn, shift/call/change
+ * decks and enemy passives that could reduce our damage or keep an enemy alive.
  */
 export function questFromAtlas(raw: RawQuest): Quest {
   const reasons: string[] = [];
+  const immediate = raw.flags?.includes('enemyImmediateAppear') ?? false;
   const stages = [...raw.stages].sort((a, b) => a.wave - b.wave);
-  const waves = stages.map((st) => {
+  const layouts: (WaveLayout | undefined)[] = [];
+  const waves = stages.map((st, si) => {
     const w = `wave ${st.wave}`;
-    const field = st.enemyFieldPosCount ?? 3;
     if (st.call?.length) reasons.push(`${w}: call deck`);
-    const onField = st.enemies.filter((e) => e.deck === 'enemy');
     for (const e of st.enemies) if (e.deck !== 'enemy') reasons.push(`${w}: ${e.deck} deck (${e.name})`);
-    if (onField.length > field || onField.some((e) => e.deckId > field)) {
-      reasons.push(`${w}: reinforcements (${onField.length} enemies, ${field} on field)`);
+    const enemies = st.enemies.filter((e) => e.deck === 'enemy').sort((a, b) => a.deckId - b.deckId);
+    const lay = layout(st, si === 0, enemies, w, reasons);
+    if (lay?.reserve.length && !immediate) {
+      reasons.push(`${w}: reinforcements enter next turn (${enemies.length} enemies, ${st.enemyFieldPosCount ?? 3} on field)`);
     }
-    for (const e of onField) {
+    layouts.push(lay);
+    for (const e of enemies) {
       const where = `${w} ${e.name}`;
       for (const p of [...(e.classPassive?.classPassive ?? []), ...(e.classPassive?.addPassive ?? [])]) {
         checkPassive(`${where} passive ${p.name ?? ''}`.trim(), p.functions, reasons);
       }
     }
-    return [...onField].sort((a, b) => a.deckId - b.deckId).map((e): Enemy => ({
+    return enemies.map((e): Enemy => ({
       hp: e.hp, className: e.svt.className, attribute: e.svt.attribute,
       traits: e.traits.map((t) => t.id), tdRate: e.serverMod.tdRate,
     }));
   });
   if (reasons.length) throw new UnsupportedQuestError([...new Set(reasons)]);
-  return { waves };
+  return layouts.some((l) => l) ? { waves, layouts } : { waves };
 }

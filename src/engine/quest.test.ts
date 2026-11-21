@@ -36,11 +36,36 @@ describe('questFromAtlas', () => {
     const q = questFromAtlas(quest({ enemies: [mk({ deckId: 2, hp: 2 }), mk({ deckId: 1, hp: 1 })] }));
     expect(q.waves[0].map((e) => e.hp)).toEqual([1, 2]);
   });
-  it('rejects reinforcements beyond enemyFieldPosCount (default 3)', () => {
+  it('rejects reinforcements that enter next turn (no enemyImmediateAppear)', () => {
     const four = [1, 2, 3, 4].map((deckId) => mk({ deckId }));
-    expect(reasons(quest({ enemies: four }))).toEqual([expect.stringMatching(/wave 1: reinforcements/)]);
-    expect(reasons(quest({ enemies: [mk({ deckId: 4 })] }))[0]).toMatch(/reinforcements/);
+    expect(reasons(quest({ enemies: four }))).toEqual([expect.stringMatching(/wave 1: reinforcements enter next turn/)]);
     expect(reasons(quest({ enemies: four, enemyFieldPosCount: 6 }))).toEqual([]);
+    // Later wave, slot 1 empty: deckId 4 only enters at the next turn start.
+    expect(reasons(quest({}, { enemies: [mk({ deckId: 2 }), mk({ deckId: 4 })] }))[0]).toMatch(/wave 2: reinforcements/);
+  });
+  it('wave 1 fills its empty slots at the turn start, even without the flag', () => {
+    const q = questFromAtlas(quest({ enemies: [mk({ deckId: 1, hp: 1 }), mk({ deckId: 3, hp: 3 }), mk({ deckId: 5, hp: 5 })] }));
+    expect(q.waves[0].map((e) => e.hp)).toEqual([1, 3, 5]);
+    expect(q.layouts?.[0]).toEqual({ field: [0, 2, 1], reserve: [], refill: [0, 1, 2] });
+  });
+  it('models reinforcements on enemyImmediateAppear quests: field, reserve in deckId order, refill slots', () => {
+    const hp = (deckId: number) => mk({ deckId, hp: deckId * 100 });
+    const q = questFromAtlas({ ...quest(
+      { enemies: [hp(5), hp(1), hp(4), hp(2), hp(3)] },
+      { enemies: [hp(2), hp(6)], enemyFieldPosCount: 3, NoEntryIds: [3] },
+      { enemies: [hp(1), hp(2), hp(3), hp(4)], originalScript: { enemyEntryOrder: [3, 1, 2] } },
+    ), flags: ['enemyImmediateAppear'] });
+    expect(q.waves[0].map((e) => e.hp)).toEqual([100, 200, 300, 400, 500]);
+    expect(q.layouts?.[0]).toEqual({ field: [0, 1, 2], reserve: [3, 4], refill: [0, 1, 2] });
+    // Later wave: slot 0 stays empty until the first refill; slot 3 never refills.
+    expect(q.layouts?.[1]).toEqual({ field: [-1, 0, -1], reserve: [1], refill: [0, 1] });
+    expect(q.layouts?.[2]).toEqual({ field: [0, 1, 2], reserve: [3], refill: [1, 2, 0] });
+  });
+  it('rejects reinforcements with every slot in NoEntryIds and duplicate deckIds', () => {
+    const flags = ['enemyImmediateAppear'];
+    const four = [1, 2, 3, 4].map((deckId) => mk({ deckId }));
+    expect(reasons({ ...quest({ enemies: four, NoEntryIds: [1, 2, 3] }), flags })[0]).toMatch(/no slot to enter/);
+    expect(reasons(quest({ enemies: [mk({ deckId: 1 }), mk({ deckId: 1 })] }))[0]).toMatch(/deckId 1 is not a free slot/);
   });
   it('rejects shift / call / change decks and stage calls', () => {
     const r = reasons(quest(

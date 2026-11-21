@@ -1,5 +1,5 @@
 import type { CompactMC, Constants, Effect, NoblePhantasm } from '../data/types';
-import { affinity, type BattleState, type Buff, type Enemy, type Quest, type Unit } from '../engine/state';
+import { affinity, layoutOf, type BattleState, type Buff, type Enemy, type Quest, type Unit } from '../engine/state';
 import { npDamage } from '../engine/damage';
 
 /*
@@ -13,6 +13,14 @@ import { npDamage } from '../engine/damage';
  * alive, no line of play explored by the solver clears that wave.
  * Gauge is ignored (optimistic). With a shortenSkill anywhere in the team every
  * skill is counted once per turn, the most the solver ever uses it.
+ *
+ * Every enemy of the wave counts, the reserve included, and every NP is
+ * counted as hitting it (AoE, optimistic for single target). At most 3 NPs
+ * fire per turn and reinforcements only enter after an NP, refilling at most
+ * one slot per refill slot each time: reserve enemy k (0-based) enters after
+ * NP floor(k / refill slots) + 1 at the earliest, so only the remaining NPs of
+ * the turn can hit it (the best of the pool, optimistic). Evaluated before any
+ * NP of the turn (turn start, after a swap), where all 3 NPs are still to come.
  */
 
 export interface BoundCtx {
@@ -23,6 +31,9 @@ export interface BoundCtx {
   hasShorten: boolean;
 }
 export interface BoundFail { wave: number; missing: number; }
+
+/** NPs per turn: 3 front units, each fires at most once (MAX_NP_PER_TURN in solve.ts). */
+const MAX_NPS = 3;
 
 type DmgKind = 'atkUp' | 'cardUp' | 'npDmgUp' | 'powerUp' | 'dmgPlus';
 const FIELD: Record<DmgKind, 'atkMod' | 'cardMod' | 'npDmgMod' | 'powerMod' | 'dmgPlus'> = {
@@ -66,6 +77,11 @@ export function damageBound(s: BattleState, c: BoundCtx): BoundFail | null {
     const shooters = pool.filter((u) => u.svt.np);
     const enemies = W === T ? s.enemies : quest.waves[W];
     const sums = enemies.map(() => [] as number[]);
+    // NPs of the turn that can still hit each enemy (see the header).
+    const reserve = W === T ? s.reserve : layoutOf(quest, W).reserve;
+    const refillSlots = Math.max(1, (W === T ? s.refill : layoutOf(quest, W).refill).length);
+    const hits = enemies.map(() => MAX_NPS);
+    reserve.forEach((ei, k) => { hits[ei] = Math.max(0, MAX_NPS - (Math.floor(k / refillSlots) + 1)); });
 
     for (const u of shooters) {
       const np = u.svt.np!;
@@ -124,7 +140,7 @@ export function damageBound(s: BattleState, c: BoundCtx): BoundFail | null {
     let missing = 0;
     enemies.forEach((en, i) => {
       if (en.hp <= 0) return;
-      const best = sums[i].sort((a, b) => b - a).slice(0, 3).reduce((a, b) => a + b, 0);
+      const best = sums[i].sort((a, b) => b - a).slice(0, hits[i]).reduce((a, b) => a + b, 0);
       missing = Math.max(missing, 1 - best / en.hp);
     });
     return missing;

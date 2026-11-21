@@ -20,7 +20,8 @@ const withBuffs = (s: BattleState, ...buffs: Buff[]) => edit(s, (x) => ({ ...x, 
 // Replaces the wave and recomputes the affinity table, as nextWave does.
 const withEnemies = (s: BattleState, ...enemies: Enemy[]): BattleState => {
   const units = [...s.front, ...s.back].filter((x): x is Unit => x !== null);
-  return { ...s, enemies, aff: Object.fromEntries(units.map((x) => [x.key, enemies.map((e) => affinity(constants, x.svt, e))])) };
+  const field = enemies.map((_, i) => i);
+  return { ...s, enemies, field, reserve: [], refill: field, aff: Object.fromEntries(units.map((x) => [x.key, enemies.map((e) => affinity(constants, x.svt, e))])) };
 };
 
 // Altria-like base input for npDamage (lv90 atk 11221, buster AoE).
@@ -239,5 +240,48 @@ describe('fireNp: extras and targets', () => {
     expect(r.state.back).toBe(s.back);
     expect(s.enemies.map((e) => e.hp)).toEqual([10358, 10358, 13074]);
     expect(prisonRuins.waves[0].map((e) => e.hp)).toEqual([10358, 10358, 13074]);
+  });
+});
+
+describe('fireNp: reinforcements', () => {
+  // Wave of 5 on 3 slots: field [0, 1, 2], reserve [3, 4] (see quest.ts layout).
+  const D = npDamage(dmgBase);
+  const reinforced = (st: CompactServant, hps: number[], refill = [0, 1, 2]) => {
+    const enemies = hps.map((hp) => enemy({ hp }));
+    const s = battle(st, { npLv: 5 });
+    const units = [...s.front, ...s.back].filter((x): x is Unit => x !== null);
+    return withGauge({
+      ...s, enemies, field: [0, 1, 2], reserve: hps.slice(3).map((_, i) => i + 3), refill,
+      aff: Object.fromEntries(units.map((x) => [x.key, enemies.map((e) => affinity(constants, x.svt, e))])),
+    }, 10000);
+  };
+  it('after an AoE NP the dead slots take the reserve in order; killedAll waits for the reserve', () => {
+    const s = reinforced(altria, [1, 10_000_000, 1, 1, 1]);
+    const r = fireNp(s, 'u');
+    expect(r.killedAll).toBe(false);
+    expect(r.state.field).toEqual([3, 1, 4]);
+    expect(r.state.reserve).toEqual([]);
+    expect(r.state.enemies.map((e) => e.hp)).toEqual([1 - D, 10_000_000 - D, 1 - D, 1, 1]);
+    // The next NP hits the enemies that just entered.
+    const r2 = fireNp({ ...withGauge(r.state, 10000) }, 'u');
+    expect(r2.state.enemies.map((e) => e.hp)).toEqual([1 - D, 10_000_000 - 2 * D, 1 - D, 1 - D, 1 - D]);
+  });
+  it('kills the whole wave with two AoE NPs, not one', () => {
+    const s = reinforced(altria, [1, 1, 1, 1]);
+    const r = fireNp(s, 'u');
+    expect(r.killedAll).toBe(false);
+    expect(r.state.field).toEqual([3, 1, 2]);
+    expect(r.state.reserve).toEqual([]);
+    expect(fireNp(withGauge(r.state, 10000), 'u').killedAll).toBe(true);
+  });
+  it('single-target targetIndex is a field slot; the refill order follows refill', () => {
+    const st = { ...altria, np: { ...altria.np!, aoe: false } };
+    const s = reinforced(st, [10_000_000, 1, 10_000_000, 7, 8], [2, 1, 0]);
+    const r = fireNp(s, 'u', 1);
+    expect(r.state.field).toEqual([0, 3, 2]);
+    expect(r.state.reserve).toEqual([4]);
+    const r2 = fireNp(withGauge(r.state, 10000), 'u', 1);
+    expect(r2.state.enemies[3].hp).toBe(7 - D);
+    expect(r2.state.field).toEqual([0, 4, 2]);
   });
 });

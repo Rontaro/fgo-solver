@@ -1,7 +1,7 @@
 import type { Effect, LevelVal } from '../data/types';
 import { npDamage } from './damage';
 import { splitHits, hitsOnEnemy, npRefund } from './npgain';
-import { applyEffect, mods, buffApplies, gaugeCap, type BattleState, type Buff, type Enemy, type Unit } from './state';
+import { applyEffect, mods, buffApplies, gaugeCap, livingSlots, refillField, type BattleState, type Buff, type Enemy, type Unit } from './state';
 
 export interface NpResult { state: BattleState; killedAll: boolean; minMargin: number; }
 
@@ -24,7 +24,11 @@ function applyExtras(front: (Unit | null)[], extras: readonly Effect[], pre: boo
  * Order (as in Chaldea's activateNP): OC level from gauge, gauge -> 0, pre
  * extras, damage + refund per target, count buffs consumed, post extras.
  * minMargin = min(damage / HP before the NP) over the targets.
- * targetIndex: enemy index for a single-target NP (default: first living).
+ * Targets are the living enemies on the field; targetIndex is a field slot
+ * for a single-target NP (default: first living slot). Afterwards the empty
+ * slots are refilled from the reserve (refillField), so a later NP of the
+ * same turn hits the enemies that just entered. killedAll: field and reserve
+ * are both empty.
  * TODO(M7): NP chains add OC (2nd NP +1, 3rd +2); not modelled yet.
  */
 export function fireNp(state: BattleState, unitKey: string, targetIndex?: number): NpResult {
@@ -36,16 +40,16 @@ export function fireNp(state: BattleState, unitKey: string, targetIndex?: number
   if (!np) throw new Error(`${unitKey} has no damage NP`);
   if (u0.gauge < 10000) throw new Error(`${unitKey} NP gauge below 100%`);
 
+  // Enemy indices (state.enemies) hit by the NP.
+  const living = livingSlots(state);
   let targets: number[];
   if (np.aoe) {
-    targets = [];
-    state.enemies.forEach((e, i) => { if (e.hp > 0) targets.push(i); });
+    targets = living.map((slot) => state.field[slot]);
   } else if (targetIndex !== undefined) {
-    if (!(state.enemies[targetIndex]?.hp > 0)) throw new Error(`enemy ${targetIndex} is not alive`);
-    targets = [targetIndex];
+    if (!living.includes(targetIndex)) throw new Error(`enemy slot ${targetIndex} is not alive`);
+    targets = [state.field[targetIndex]];
   } else {
-    const i = state.enemies.findIndex((e) => e.hp > 0);
-    targets = i < 0 ? [] : [i];
+    targets = living.length ? [state.field[living[0]]] : [];
   }
   if (targets.length === 0) throw new Error('no living enemy');
 
@@ -102,5 +106,7 @@ export function fireNp(state: BattleState, unitKey: string, targetIndex?: number
 
   applyExtras(front, np.extra, false, ocLv, npLv, unitKey);
 
-  return { state: { ...state, front, enemies }, killedAll: enemies.every((e) => e.hp <= 0), minMargin };
+  // enemies holds the reserve too (full HP until it enters): every enemy dead
+  // means field and reserve are empty.
+  return { state: refillField({ ...state, front, enemies }), killedAll: enemies.every((e) => e.hp <= 0), minMargin };
 }

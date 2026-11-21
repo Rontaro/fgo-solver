@@ -30,7 +30,14 @@ export interface BattleState {
   readonly wave: number;               // 0-based index into Quest.waves
   readonly front: readonly (Unit | null)[];
   readonly back: readonly Unit[];
+  /** Every enemy of the current wave (Quest.waves order); index = enemy id within the wave. */
   readonly enemies: readonly Enemy[];
+  /** Field slot -> enemy index (-1 = empty). Single-target NPs aim at a slot. */
+  readonly field: readonly number[];
+  /** Enemies still waiting to enter, in entry order. */
+  readonly reserve: readonly number[];
+  /** Slots refilled from the reserve, in refill order (see refillField). */
+  readonly refill: readonly number[];
   readonly mcCd: readonly number[];
   readonly swapped: boolean;
   /** unit key -> affinity against enemies[i] of the current wave. */
@@ -40,7 +47,60 @@ export interface TeamMember {
   svt: CompactServant; lv: number; npLv: number; skillLv: [number, number, number]; append2Lv: number;
   fou: number; ce: CompactCE | null; ceLv: number; ceMlb: boolean; key: string;
 }
-export interface Quest { readonly waves: readonly (readonly Enemy[])[]; }
+/**
+ * Field layout of a wave with reinforcements. field: initial slot -> enemy
+ * index (-1 = empty); reserve: the other enemies in entry order; refill: the
+ * slots that take a reserve enemy, in the order they are filled.
+ */
+export interface WaveLayout {
+  readonly field: readonly number[]; readonly reserve: readonly number[]; readonly refill: readonly number[];
+}
+/**
+ * waves[w]: every enemy of wave w. layouts[w] absent: all of them on the
+ * field (slot i = enemy i), no reserve.
+ */
+export interface Quest {
+  readonly waves: readonly (readonly Enemy[])[];
+  readonly layouts?: readonly (WaveLayout | undefined)[];
+}
+
+const plainLayouts = new WeakMap<readonly Enemy[], WaveLayout>();
+export function layoutOf(quest: Quest, wave: number): WaveLayout {
+  const l = quest.layouts?.[wave];
+  if (l) return l;
+  const es = quest.waves[wave];
+  let p = plainLayouts.get(es);
+  if (!p) {
+    const field = es.map((_, i) => i);
+    p = { field, reserve: [], refill: field };
+    plainLayouts.set(es, p);
+  }
+  return p;
+}
+
+/** Field slots holding a living enemy. */
+export const livingSlots = (s: Pick<BattleState, 'enemies' | 'field'>): number[] =>
+  s.field.flatMap((ei, slot) => (ei >= 0 && s.enemies[ei].hp > 0 ? [slot] : []));
+
+/**
+ * Reinforcements (Chaldea's _replenishActors, on quests flagged
+ * enemyImmediateAppear: run after every NP): each refill slot, in order, that
+ * is empty or holds a dead enemy takes the next reserve enemy. Returns the
+ * state unchanged when nothing enters.
+ */
+export function refillField<S extends Pick<BattleState, 'enemies' | 'field' | 'reserve' | 'refill'>>(s: S): S {
+  if (s.reserve.length === 0) return s;
+  let field: number[] | null = null;
+  let next = 0;
+  for (const slot of s.refill) {
+    if (next >= s.reserve.length) break;
+    const ei = (field ?? s.field)[slot];
+    if (ei >= 0 && s.enemies[ei].hp > 0) continue;
+    field ??= s.field.slice();
+    field[slot] = s.reserve[next++];
+  }
+  return field ? { ...s, field, reserve: s.reserve.slice(next) } : s;
+}
 
 /**
  * NP gauge cap by NP level: NP1 100%, NP2-4 200%, NP5 300%. This is a game
@@ -184,10 +244,11 @@ export function initBattle(members: readonly TeamMember[], mc: CompactMC, mcLv: 
     };
   });
   const enemies = quest.waves[0];
+  const lay = layoutOf(quest, 0);
   return {
     turn: 1, wave: 0,
     front: units.slice(0, 3), back: units.slice(3),
-    enemies, mcCd: mc.skills.map(() => 0), swapped: false,
+    enemies, field: lay.field, reserve: lay.reserve, refill: lay.refill, mcCd: mc.skills.map(() => 0), swapped: false,
     aff: affTable(constants, units, enemies),
   };
 }
@@ -255,7 +316,8 @@ function tick(u: Unit): Unit {
  */
 export function endTurn(state: BattleState): BattleState {
   // The model assumes every wave dies on the turn it appears (enemies never
-  // act); the enemy allow-list in quest.ts relies on it.
+  // act); the enemy allow-list in quest.ts relies on it. enemies includes the
+  // reserve (not entered yet, full HP), so this covers field and reserve.
   if (state.enemies.some((e) => e.hp > 0)) throw new Error('endTurn with living enemies');
   return {
     ...state,
@@ -269,7 +331,11 @@ export function nextWave(state: BattleState, quest: Quest, constants: Constants)
   const enemies = quest.waves[state.wave + 1];
   if (!enemies) throw new Error('no next wave');
   const units = [...state.front.filter((u): u is Unit => u !== null), ...state.back];
-  return { ...state, wave: state.wave + 1, enemies, aff: affTable(constants, units, enemies) };
+  const lay = layoutOf(quest, state.wave + 1);
+  return {
+    ...state, wave: state.wave + 1, enemies, field: lay.field, reserve: lay.reserve, refill: lay.refill,
+    aff: affTable(constants, units, enemies),
+  };
 }
 
 /** True when the buff counts for this card against this enemy. */

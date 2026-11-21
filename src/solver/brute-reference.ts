@@ -3,7 +3,7 @@
 // target, the order change at any point of a turn, exact-state memo.
 import type { CompactMC, Constants } from '../data/types';
 import {
-  initBattle, useSkill as castSkill, useMc as castMc, endTurn, nextWave,
+  initBattle, useSkill as castSkill, useMc as castMc, endTurn, nextWave, livingSlots,
   type BattleState, type Quest, type TeamMember,
 } from '../engine/state';
 import { fireNp } from '../engine/np';
@@ -15,7 +15,8 @@ type Atom = { id: string; opts: ((s: BattleState) => BattleState)[] };
  * any subset of the available skills and non-swap MC skills (in slot order),
  * optionally an order change followed by any subset of what is left (the
  * incoming unit included), then every NP sequence of up to 3 distinct units
- * and every single-target choice.
+ * and every single-target choice (a living field slot; waves with a reserve
+ * refill after each NP, as the engine does).
  */
 export function bruteMinActions(team: readonly TeamMember[], mc: CompactMC, mcLv: number, quest: Quest, constants: Constants): number {
   const idx = mcLv - 1;
@@ -23,14 +24,14 @@ export function bruteMinActions(team: readonly TeamMember[], mc: CompactMC, mcLv
   const plainMcs = mc.skills.flatMap((_, i) => (swapMcs.includes(i) ? [] : [i]));
   const memo = new Map<string, number>();
   const key = (s: BattleState) => JSON.stringify(
-    [s.wave, s.front, s.back, s.enemies.map((e) => e.hp), s.mcCd, s.swapped],
+    [s.wave, s.front, s.back, s.enemies.map((e) => e.hp), s.field, s.mcCd, s.swapped],
     (k, v) => (k === 'svt' ? undefined : v),
   );
   const fire = (s: BattleState, used: number, depth: number, out: BattleState[]) => {
     s.front.forEach((u, slot) => {
       if (!u || !u.svt.np || used & (1 << slot) || u.gauge < 10000 || depth >= 3) return;
-      const living = s.enemies.flatMap((e, i) => (e.hp > 0 ? [i] : []));
-      for (const ti of u.svt.np.aoe ? [undefined] : living) {
+      // Field slots; reinforcements enter after each NP (fireNp).
+      for (const ti of u.svt.np.aoe ? [undefined] : livingSlots(s)) {
         const r = fireNp(s, u.key, ti);
         if (r.killedAll) out.push(r.state); else fire(r.state, used | (1 << slot), depth + 1, out);
       }
