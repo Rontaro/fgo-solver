@@ -40,6 +40,16 @@ export interface BattleState {
   readonly reserve: readonly number[];
   /** Slots refilled from the reserve, in refill order (see refillField). */
   readonly refill: readonly number[];
+  /** Enemy indices in auto-target order (see npTarget). */
+  readonly retarget: readonly number[];
+  /**
+   * The turn's enemy target (enemy index, -1 = none chosen). In the game the
+   * target is chosen once, before the NPs; single-target NPs hit it while it
+   * lives, then the auto target (npTarget).
+   */
+  readonly target: number;
+  /** An NP has fired this turn (the target can no longer be chosen). */
+  readonly npFired: boolean;
   readonly mcCd: readonly number[];
   readonly swapped: boolean;
   /** unit key -> affinity against enemies[i] of the current wave. */
@@ -56,6 +66,12 @@ export interface TeamMember {
  */
 export interface WaveLayout {
   readonly field: readonly number[]; readonly reserve: readonly number[]; readonly refill: readonly number[];
+  /**
+   * Enemy indices in auto-target order (default: index order). Chaldea's
+   * getNonNullTargetIndex: the living field enemy with the lowest uniqueId
+   * on enemyImmediateAppear quests, else the first living slot.
+   */
+  readonly retarget?: readonly number[];
 }
 /**
  * waves[w]: every enemy of wave w. layouts[w] absent: all of them on the
@@ -74,10 +90,35 @@ export function layoutOf(quest: Quest, wave: number): WaveLayout {
   let p = plainLayouts.get(es);
   if (!p) {
     const field = es.map((_, i) => i);
-    p = { field, reserve: [], refill: field };
+    p = { field, reserve: [], refill: field, retarget: field };
     plainLayouts.set(es, p);
   }
   return p;
+}
+
+const waveState = (lay: WaveLayout) => ({
+  field: lay.field, reserve: lay.reserve, refill: lay.refill,
+  retarget: lay.retarget ?? lay.field.filter((x) => x >= 0).concat(lay.reserve).sort((a, b) => a - b),
+  target: -1, npFired: false,
+});
+
+/**
+ * Enemy hit by a single-target NP now: the turn's target while it is alive on
+ * the field, else the first living field enemy in retarget order; -1 if none.
+ */
+export function npTarget(s: Pick<BattleState, 'enemies' | 'field' | 'retarget' | 'target'>): number {
+  const on = (ei: number) => ei >= 0 && s.enemies[ei].hp > 0 && s.field.includes(ei);
+  if (on(s.target)) return s.target;
+  for (const ei of s.retarget) if (on(ei)) return ei;
+  return -1;
+}
+
+/** Choose the turn's target: the enemy in a living field slot, before any NP of the turn. */
+export function chooseTarget<S extends Pick<BattleState, 'enemies' | 'field' | 'target' | 'npFired'>>(s: S, slot: number): S {
+  if (s.npFired) throw new Error('the target is chosen before the NPs');
+  const ei = s.field[slot] ?? -1;
+  if (!(ei >= 0 && s.enemies[ei].hp > 0)) throw new Error(`enemy slot ${slot} is not alive`);
+  return { ...s, target: ei };
 }
 
 /** Field slots holding a living enemy. */
@@ -250,7 +291,7 @@ export function initBattle(members: readonly TeamMember[], mc: CompactMC, mcLv: 
   return {
     turn: 1, wave: 0,
     front: units.slice(0, 3), back: units.slice(3),
-    enemies, field: lay.field, reserve: lay.reserve, refill: lay.refill, mcCd: mc.skills.map(() => 0), swapped: false,
+    enemies, ...waveState(lay), mcCd: mc.skills.map(() => 0), swapped: false,
     aff: affTable(constants, units, enemies),
   };
 }
@@ -325,7 +366,7 @@ export function endTurn(state: BattleState): BattleState {
     ...state,
     front: state.front.map((u) => (u ? tick(u) : null)),
     mcCd: state.mcCd.some((c) => c > 0) ? state.mcCd.map((c) => Math.max(0, c - 1)) : state.mcCd,
-    turn: state.turn + 1,
+    turn: state.turn + 1, target: -1, npFired: false,
   };
 }
 
@@ -335,7 +376,7 @@ export function nextWave(state: BattleState, quest: Quest, constants: Constants)
   const units = [...state.front.filter((u): u is Unit => u !== null), ...state.back];
   const lay = layoutOf(quest, state.wave + 1);
   return {
-    ...state, wave: state.wave + 1, enemies, field: lay.field, reserve: lay.reserve, refill: lay.refill,
+    ...state, wave: state.wave + 1, enemies, ...waveState(lay),
     aff: affTable(constants, units, enemies),
   };
 }

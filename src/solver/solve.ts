@@ -12,8 +12,9 @@ import { damageBound, type BoundCtx } from './bound';
  * (front slot 0..2 x skill 1..3, then the MC skills other than order change),
  * so a set of skills is tried once, never as permutations. At the end of the
  * list the NPs fire: every ordered sequence of up to 3 distinct charged front
- * units (a single-target NP tries every living enemy on the field), stopping
- * as soon as the wave dies. Reinforcements enter after each NP (fireNp), so a
+ * units, stopping as soon as the wave dies. Single-target NPs hit the turn's
+ * target (one per turn, chosen before the NPs; see fireSeq for the choices
+ * tried). Reinforcements enter after each NP (fireNp), so a
  * wave with a reserve needs several NPs in the turn; the wave dies when field
  * and reserve are empty.
  *
@@ -73,6 +74,11 @@ export interface Step {
   num?: number;
   target?: string;
   swap?: [number, number];
+  /**
+   * NP steps: the turn's enemy target, a field slot at the start of the NPs.
+   * Only on the turn's first NP step (one target per turn, as in the game);
+   * single-target NPs hit it while it lives, then the auto target.
+   */
   targetIndex?: number;
 }
 export interface Solution { turns: Step[][]; margins: number[]; actions: number; usesSwap: boolean; }
@@ -653,27 +659,50 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
     fireSeq(s, 0, 0);
   }
 
-  function fireSeq(s: BattleState, used: number, depth: number): void {
+  /**
+   * Every ordered NP sequence from s. The turn's target (one per turn, chosen
+   * before the NPs, see fireNp) is chosen lazily, at the first single-target
+   * NP: the distinct outcomes are each enemy alive at the phase start and
+   * still alive now, plus the auto target when one of them has died. The
+   * choice (a slot at the phase start) goes on the turn's first NP step.
+   * start: the state at the phase start; first: index of the turn's first NP
+   * step in cur().
+   */
+  function fireSeq(s: BattleState, used: number, depth: number, start = s, first = cur().length): void {
     let fired = false;
     for (let slot = 0; slot < s.front.length; slot++) {
       const u = s.front[slot];
       if (!u || !u.svt.np || used & (1 << slot) || u.gauge < 10000) continue;
       fired = true;
-      const living = livingSlots(s);
-      const targets: (number | undefined)[] = u.svt.np.aoe || living.length === 1 ? [undefined] : living;
-      for (const ti of targets) {
+      for (const ti of targetChoices(s, start, u.svt.np.aoe)) {
         if (tick()) return;
         stats.npFires++;
-        const r = fireNp(s, u.key, ti);
-        cur().push({ kind: 'np', unit: u.key, ...(ti !== undefined && { targetIndex: ti }) });
+        const r = fireNp(ti === undefined ? s : { ...s, target: start.field[ti] }, u.key);
+        const step: Step = { kind: 'np', unit: u.key };
+        const firstStep = depth > 0 ? cur()[first] : undefined;
+        if (ti !== undefined) {
+          if (depth === 0) step.targetIndex = ti;
+          else cur()[first] = { ...firstStep!, targetIndex: ti };
+        }
+        cur().push(step);
         if (r.killedAll) waveCleared(r.state);
-        else if (depth + 1 < MAX_NP_PER_TURN) fireSeq(r.state, used | (1 << slot), depth + 1);
+        else if (depth + 1 < MAX_NP_PER_TURN) fireSeq(r.state, used | (1 << slot), depth + 1, start, first);
         else recordShort(r.state);
         cur().pop();
+        if (firstStep) cur()[first] = firstStep;
         if (stop) return;
       }
     }
     if (!fired) recordShort(s);
+  }
+  /** Target slots (at the phase start) worth trying for this NP; [undefined] = no choice to make now. */
+  function targetChoices(s: BattleState, start: BattleState, aoe: boolean): (number | undefined)[] {
+    if (aoe || s.target >= 0) return [undefined];
+    const startLiving = livingSlots(start);
+    if (startLiving.length < 2) return [undefined];
+    const alive = startLiving.filter((sl) => s.enemies[start.field[sl]].hp > 0);
+    const dead = startLiving.find((sl) => s.enemies[start.field[sl]].hp <= 0);
+    return dead === undefined ? alive : [...alive, dead];
   }
 
   function recordShort(s: BattleState) {
@@ -824,7 +853,7 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
     const tryPicked = (s: BattleState, j: number): Step[] | null => {
       if (j === picked.length) {
         evals++;
-        const nps = clearingNps(s, 0, 0);
+        const nps = clearingNps(s);
         return nps ? [...chosen, ...nps] : null;
       }
       for (const st of choices[picked[j]]) {
@@ -855,21 +884,30 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
     return null;
   }
 
-  /** Some NP sequence (up to 3 distinct units, any targets) that clears s, or null. */
-  function clearingNps(s: BattleState, used: number, depth: number): Step[] | null {
+  /**
+   * Some NP sequence (up to 3 distinct units, any turn target) that clears s,
+   * or null. The target is chosen up front (every living slot when a charged
+   * single-target NP is on the field) and carried by the first NP step.
+   */
+  function clearingNps(s: BattleState): Step[] | null {
+    const st = s.front.some((u) => u?.svt.np && !u.svt.np.aoe && u.gauge >= 10000);
+    const living = livingSlots(s);
+    for (const ti of st && living.length > 1 ? living : [undefined]) {
+      const seq = npsFrom(ti === undefined ? s : { ...s, target: s.field[ti] }, 0, 0);
+      if (seq) return ti === undefined ? seq : [{ ...seq[0], targetIndex: ti }, ...seq.slice(1)];
+    }
+    return null;
+  }
+  function npsFrom(s: BattleState, used: number, depth: number): Step[] | null {
     if (depth >= MAX_NP_PER_TURN) return null;
     for (let slot = 0; slot < s.front.length; slot++) {
       const u = s.front[slot];
       if (!u || !u.svt.np || used & (1 << slot) || u.gauge < 10000) continue;
-      const living = livingSlots(s);
-      const targets: (number | undefined)[] = u.svt.np.aoe || living.length === 1 ? [undefined] : living;
-      for (const ti of targets) {
-        const r = fireNp(s, u.key, ti);
-        const step: Step = { kind: 'np', unit: u.key, ...(ti !== undefined && { targetIndex: ti }) };
-        if (r.killedAll) return [step];
-        const rest = clearingNps(r.state, used | (1 << slot), depth + 1);
-        if (rest) return [step, ...rest];
-      }
+      const r = fireNp(s, u.key);
+      const step: Step = { kind: 'np', unit: u.key };
+      if (r.killedAll) return [step];
+      const rest = npsFrom(r.state, used | (1 << slot), depth + 1);
+      if (rest) return [step, ...rest];
     }
     return null;
   }

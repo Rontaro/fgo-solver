@@ -3,7 +3,7 @@
 // target, the order change at any point of a turn, exact-state memo.
 import type { CompactMC, Constants } from '../data/types';
 import {
-  initBattle, useSkill as castSkill, useMc as castMc, endTurn, nextWave, livingSlots,
+  initBattle, useSkill as castSkill, useMc as castMc, endTurn, nextWave, livingSlots, chooseTarget,
   type BattleState, type Quest, type TeamMember,
 } from '../engine/state';
 import { fireNp } from '../engine/np';
@@ -15,8 +15,8 @@ type Atom = { id: string; opts: ((s: BattleState) => BattleState)[] };
  * any subset of the available skills and non-swap MC skills (in slot order),
  * optionally an order change followed by any subset of what is left (the
  * incoming unit included), then every NP sequence of up to 3 distinct units
- * and every single-target choice (a living field slot; waves with a reserve
- * refill after each NP, as the engine does).
+ * and every turn target (one living field slot per turn, chosen before the
+ * NPs; waves with a reserve refill after each NP, as the engine does).
  */
 export function bruteMinActions(team: readonly TeamMember[], mc: CompactMC, mcLv: number, quest: Quest, constants: Constants): number {
   const idx = mcLv - 1;
@@ -27,14 +27,17 @@ export function bruteMinActions(team: readonly TeamMember[], mc: CompactMC, mcLv
     [s.wave, s.front, s.back, s.enemies.map((e) => e.hp), s.field, s.mcCd, s.swapped],
     (k, v) => (k === 'svt' ? undefined : v),
   );
+  // One target per turn, chosen before the NPs: every living field slot, then
+  // every NP sequence (single-target NPs follow the engine's npTarget).
+  const fireAll = (s: BattleState, out: BattleState[]) => {
+    const living = livingSlots(s);
+    for (const t of living.length > 1 ? living : [undefined]) fire(t === undefined ? s : chooseTarget(s, t), 0, 0, out);
+  };
   const fire = (s: BattleState, used: number, depth: number, out: BattleState[]) => {
     s.front.forEach((u, slot) => {
       if (!u || !u.svt.np || used & (1 << slot) || u.gauge < 10000 || depth >= 3) return;
-      // Field slots; reinforcements enter after each NP (fireNp).
-      for (const ti of u.svt.np.aoe ? [undefined] : livingSlots(s)) {
-        const r = fireNp(s, u.key, ti);
-        if (r.killedAll) out.push(r.state); else fire(r.state, used | (1 << slot), depth + 1, out);
-      }
+      const r = fireNp(s, u.key);
+      if (r.killedAll) out.push(r.state); else fire(r.state, used | (1 << slot), depth + 1, out);
     });
   };
   const frontKeys = (s: BattleState) => s.front.flatMap((x) => (x ? [x.key] : []));
@@ -76,7 +79,7 @@ export function bruteMinActions(team: readonly TeamMember[], mc: CompactMC, mcLv
     const finish = (x: BattleState, n: number) => {
       if (n >= best) return;
       const outs: BattleState[] = [];
-      fire(x, 0, 0, outs);
+      fireAll(x, outs);
       for (const o of outs) {
         const rest = s.wave === quest.waves.length - 1 ? 0 : f(nextWave(endTurn(o), quest, constants));
         best = Math.min(best, n + rest);

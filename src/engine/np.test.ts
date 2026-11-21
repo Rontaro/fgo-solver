@@ -21,7 +21,7 @@ const withBuffs = (s: BattleState, ...buffs: Buff[]) => edit(s, (x) => ({ ...x, 
 const withEnemies = (s: BattleState, ...enemies: Enemy[]): BattleState => {
   const units = [...s.front, ...s.back].filter((x): x is Unit => x !== null);
   const field = enemies.map((_, i) => i);
-  return { ...s, enemies, field, reserve: [], refill: field, aff: Object.fromEntries(units.map((x) => [x.key, enemies.map((e) => affinity(constants, x.svt, e))])) };
+  return { ...s, enemies, field, reserve: [], refill: field, retarget: field, aff: Object.fromEntries(units.map((x) => [x.key, enemies.map((e) => affinity(constants, x.svt, e))])) };
 };
 
 // Altria-like base input for npDamage (lv90 atk 11221, buster AoE).
@@ -251,7 +251,7 @@ describe('fireNp: reinforcements', () => {
     const s = battle(st, { npLv: 5 });
     const units = [...s.front, ...s.back].filter((x): x is Unit => x !== null);
     return withGauge({
-      ...s, enemies, field: [0, 1, 2], reserve: hps.slice(3).map((_, i) => i + 3), refill,
+      ...s, enemies, field: [0, 1, 2], reserve: hps.slice(3).map((_, i) => i + 3), refill, retarget: hps.map((_, i) => i),
       aff: Object.fromEntries(units.map((x) => [x.key, enemies.map((e) => affinity(constants, x.svt, e))])),
     }, 10000);
   };
@@ -280,9 +280,25 @@ describe('fireNp: reinforcements', () => {
     const r = fireNp(s, 'u', 1);
     expect(r.state.field).toEqual([0, 3, 2]);
     expect(r.state.reserve).toEqual([4]);
-    const r2 = fireNp(withGauge(r.state, 10000), 'u', 1);
-    expect(r2.state.enemies[3].hp).toBe(7 - D);
-    expect(r2.state.field).toEqual([0, 4, 2]);
+    // One target per turn, chosen before the NPs.
+    expect(() => fireNp(withGauge(r.state, 10000), 'u', 1)).toThrow(/before the NPs/);
+  });
+  it('one target per turn: after it dies, the next ST NP hits the first living field enemy, not the newcomer', () => {
+    // Field A, B, C, reserve D. NP1 on A kills it, D enters slot 0; NP2 hits B.
+    const st = { ...altria, np: { ...altria.np!, aoe: false } };
+    const s = reinforced(st, [1, 10_000_000, 10_000_000, 10_000_000]);
+    const r = fireNp(s, 'u', 0);
+    expect(r.state.field).toEqual([3, 1, 2]);
+    const r2 = fireNp(withGauge(r.state, 10000), 'u');
+    expect(r2.state.enemies.map((e) => e.hp)).toEqual([1 - D, 10_000_000 - D, 10_000_000, 10_000_000]);
+    // The target stays while it lives: chosen C, both NPs hit C.
+    const c = fireNp(withGauge(fireNp(s, 'u', 2).state, 10000), 'u');
+    expect(c.state.enemies[2].hp).toBe(10_000_000 - 2 * D);
+  });
+  it('the retarget order decides the auto target', () => {
+    const st = { ...altria, np: { ...altria.np!, aoe: false } };
+    const s = { ...reinforced(st, [10_000_000, 10_000_000, 10_000_000]), retarget: [2, 0, 1] };
+    expect(fireNp(s, 'u').state.enemies[2].hp).toBe(10_000_000 - D);
   });
 });
 
