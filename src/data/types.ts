@@ -76,4 +76,4 @@ export interface QuestEntry {
 
 export interface QuestWar { warId: number; warName: string; eventId: number; quests: QuestEntry[]; }
 
-export interface DataVersion { hash: string; timestamp: number; }
+export interface DataVersion { hash: string; timestamp: number; build?: string; }

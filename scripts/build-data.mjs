@@ -128,7 +128,6 @@ async function buildRegion(region) {
   console.log(`[${region}] info`);
   const info = (await get('/info'))[region];
   if (!info) throw new Error(`/info has no entry for ${region}`);
-  await write('version.json', { hash: info.hash, timestamp: info.timestamp });
 
   console.log(`[${region}] servants, craft essences, mystic codes`);
   const rawServants = (await get(`/export/${region}/nice_servant.json`))
@@ -173,6 +172,10 @@ async function buildRegion(region) {
     .filter((s) => s.unsupported.length > 0)
     .map((s) => ({ collectionNo: s.collectionNo, name: s.name, unsupported: s.unsupported }));
   await write('unsupported-report.json', unsupported);
+
+  // Written last: clients key their cache on hash + build, so a page loaded while
+  // the files above are being regenerated never caches a half-old data set.
+  await write('version.json', { hash: info.hash, timestamp: info.timestamp, build: new Date().toISOString() });
 
   return {
     region, written, servants: servants.length, ces: ces.length, mcs: mcs.length,

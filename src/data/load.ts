@@ -44,9 +44,9 @@ function toRegionData(c: CachedData, stale: boolean): RegionData {
 async function fetchAll(region: Region): Promise<CachedData> {
   const version = await fetchJson<DataVersion>(region, 'version.json', { cache: 'no-cache' });
   const cached = await get<CachedData>(cacheKey(region));
-  if (cached && cached.version.hash === version.hash) return cached;
-  // The hash is part of the URL so a new data version never hits a stale HTTP cache.
-  const q = `?v=${encodeURIComponent(version.hash)}-${SCHEMA}`;
+  if (cached && cached.version.hash === version.hash && cached.version.build === version.build) return cached;
+  // Hash and build are part of the URL so a new data set never hits a stale HTTP cache.
+  const q = `?v=${encodeURIComponent(`${version.hash}-${version.build ?? ''}`)}-${SCHEMA}`;
   const [servants, ces, mcs, constants, quests] = await Promise.all([
     fetchJson<CompactServant[]>(region, `servants.json${q}`),
     fetchJson<CompactCE[]>(region, `ces.json${q}`),
