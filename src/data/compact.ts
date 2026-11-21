@@ -115,7 +115,7 @@ function levels(svals: any[], ok: boolean[]): LevelVal[] {
 
 interface ConvOpts {
   npDamage?: any;   // the NP's main damage function: skipped, splits pre/post extras
-  checkOc?: boolean; // NP extras: OC-dependent values are not modelled yet
+  npExtras?: boolean; // NP extras: fill Effect.oc when OC variants differ
 }
 
 /*
@@ -139,23 +139,29 @@ export function convertFunctions(funcs: any[], unsupported: string[], opts: Conv
     // team=enemy: only runs when an enemy casts it. Never for our side.
     if (f.funcTargetTeam === 'enemy') { prevOk = false; continue; }
     const svals: any[] = f.svals ?? [];
+    // svals = OC1; svals2..svals5 = OC2..OC5 (NP functions only). The Rate rule
+    // applies to every OC variant; plain() checks the keys of all of them.
+    const sets: any[][] = [svals, ...OC_SVALS.map((k) => f[k]).filter(Boolean)];
     const isPlain = plain(f);
-    const lvOk = svals.map((v) => {
+    const okOf = (set: any[]) => set.map((v) => {
       const r = v.Rate ?? 1000;
       return r >= 1000 || (r <= -1000 && prevOk);
     });
-    prevOk = SIDE[f.funcTargetType] === 'ally' && isPlain && lvOk.length > 0 && lvOk.every(Boolean);
+    const setOk = sets.map(okOf);
+    const lvOk = setOk[0];
+    prevOk = SIDE[f.funcTargetType] === 'ally' && isPlain && lvOk.length > 0 && setOk.every((s) => s.every(Boolean));
 
     const c = classify(f);
     if (c.cls === 'ignore') continue;
     if (c.cls === 'unsupported') { unsupported.push(c.reason); continue; }
     if (!isPlain) { unsupported.push('cond:' + f.funcType); continue; }
-    if (opts.checkOc && OC_SVALS.some((k) => f[k] && JSON.stringify(f[k]) !== JSON.stringify(f.svals))) {
-      unsupported.push('np:ocExtra:' + f.funcType); continue;
-    }
-    if (!lvOk.some(Boolean)) continue;
+    if (!setOk.some((s) => s.some(Boolean))) continue;
 
+    // lv = OC1 values: code that ignores OC stays conservative for helpful effects.
     const e: Effect = { kind: c.kind, target: TARGET[f.funcTargetType], lv: levels(svals, lvOk) };
+    if (opts.npExtras && sets.length === 5 && sets.some((s) => JSON.stringify(s) !== JSON.stringify(svals))) {
+      e.oc = sets.map((s, i) => levels(s, setOk[i]));
+    }
     if (f.funcType === 'addState' || f.funcType === 'addStateShort') {
       const b = f.buffs[0];
       const self: number[] = (b.ckSelfIndv ?? []).map((t: any) => t.id);
@@ -208,7 +214,7 @@ function npOf(svt: any, unsupported: string[]): NoblePhantasm | null {
     hits: np.npDistribution,
     npRate: np.npGain.np,
     // Any other damageNp* in the list is reported unsupported by convertFunctions.
-    extra: convertFunctions(np.functions, unsupported, { npDamage: dmg, checkOc: true }),
+    extra: convertFunctions(np.functions, unsupported, { npDamage: dmg, npExtras: true }),
   };
 }
 

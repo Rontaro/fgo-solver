@@ -15,6 +15,10 @@ export interface Effect {
   cards?: Card[];          // cardUp: which cards it applies to
   opTraits?: number[];     // powerUp/npDmgUp: only vs these traits
   pre?: boolean;           // NP extra only: true = runs before the damage function
+  // NP extra only, set when the value depends on Overcharge: oc[ocLv-1][npLv-1]
+  // (from svals..svals5). `lv` always equals oc[0] (OC1), so code that ignores
+  // OC stays conservative for helpful effects.
+  oc?: LevelVal[][];
 }
 
 export interface Skill { num: 1 | 2 | 3; cooldown: number[]; effects: Effect[]; }

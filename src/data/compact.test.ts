@@ -32,16 +32,23 @@ describe('compactServant', () => {
     expect(s.np).toBeNull();
     expect(s.passives.find((e) => e.kind === 'cardUp')!.cards).toEqual(['arts']);
   });
-  it('Altria: buster AoE NP, 600% at NP5 OC1, 1 hit, npRate, OC-scaling refund flagged', () => {
+  it('Altria: buster AoE NP, 600% at NP5 OC1, 1 hit, npRate, simulable', () => {
     const s = compactServant(altria as any);
     expect(s.np!.card).toBe('buster');
     expect(s.np!.aoe).toBe(true);
     expect(s.np!.mult[0][4]).toBe(6000);
     expect(s.np!.hits).toEqual([100]);
     expect(s.np!.npRate).toEqual([86, 86, 86, 86, 86]);
-    // The NP's self gainNp scales with OC (20% -> 50%), which is not modelled
-    // yet: flagged rather than guessed.
-    expect(s.unsupported).toEqual(['np:ocExtra:gainNp']);
+    expect(s.unsupported).toEqual([]);
+  });
+  it('Altria: NP self gainNp scales with OC (20% -> 50%), lv = OC1', () => {
+    const g = compactServant(altria as any).np!.extra.find((e) => e.kind === 'gainNp')!;
+    expect(g.target).toBe('self');
+    expect(g.pre).toBeUndefined();
+    expect(g.oc![0][4].value).toBe(2000);
+    expect(g.oc![4][4].value).toBe(5000);
+    expect(g.oc!.map((o) => o[0].value)).toEqual([2000, 2750, 3500, 4250, 5000]);
+    expect(g.lv).toEqual(g.oc![0]);
   });
   it('Altria: upgraded skills win, Riding passive is cardUp quick', () => {
     const s = compactServant(altria as any);
@@ -49,7 +56,7 @@ describe('compactServant', () => {
     expect(s.skills[1].effects.some((e) => e.kind === 'npDmgUp')).toBe(true);
     expect(s.passives).toHaveLength(1);
     expect(s.passives[0]).toMatchObject({ kind: 'cardUp', target: 'self', cards: ['quick'] });
-    expect(s.np!.extra).toEqual([]);
+    expect(s.np!.extra.map((e) => e.kind)).toEqual(['gainNp']);
   });
 });
 
@@ -137,10 +144,26 @@ describe('convertFunctions', () => {
     const dmg = func('damageNp', 'enemyAll');
     const before = func('gainNp');
     const after = buff('upAtk');
-    const { out } = run([before, dmg, after], { npDamage: dmg, checkOc: true });
+    const { out } = run([before, dmg, after], { npDamage: dmg, npExtras: true });
     expect(out.map((e) => e.pre)).toEqual([true, undefined]);
-    const oc = func('gainNp', 'self', {}, { svals2: [{ Rate: 1000, Value: 2000 }] });
-    expect(run([dmg, oc], { npDamage: dmg, checkOc: true }).unsupported).toEqual(['np:ocExtra:gainNp']);
+    expect(out.every((e) => e.oc === undefined)).toBe(true); // no OC variants
+    const sv = (Value: number, Rate = 1000) => [{ Rate, Value }];
+    const oc = func('gainNp', 'self', {}, {
+      svals2: sv(2000), svals3: sv(3000, 500), svals4: sv(4000), svals5: sv(5000),
+    });
+    const r = run([dmg, oc], { npDamage: dmg, npExtras: true });
+    expect(r.unsupported).toEqual([]);
+    // Per-level Rate rule applies to each OC variant: OC3 at Rate 500 -> 0.
+    expect(r.out[0].oc!.map((o) => o[0].value)).toEqual([1000, 2000, 0, 4000, 5000]);
+    expect(r.out[0].lv[0].value).toBe(1000);
+    // Unknown keys in an OC variant are a condition too.
+    const condOc = func('gainNp', 'self', {}, {
+      svals2: [{ Rate: 1000, Value: 2000, EventId: 1 }], svals3: sv(3000), svals4: sv(4000), svals5: sv(5000),
+    });
+    expect(run([dmg, condOc], { npDamage: dmg, npExtras: true }).unsupported).toEqual(['cond:gainNp']);
+    // Equal OC variants: no oc field.
+    const flat = func('gainNp', 'self', {}, { svals2: sv(1000), svals3: sv(1000), svals4: sv(1000), svals5: sv(1000) });
+    expect(run([dmg, flat], { npDamage: dmg, npExtras: true }).out[0].oc).toBeUndefined();
     expect(run([func('damageNp', 'enemy')]).unsupported).toEqual(['func:damageNp@enemy']);
   });
 });
