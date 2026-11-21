@@ -1,0 +1,39 @@
+{
+  "servants": {
+    "1": "Mash",
+    "37": "Waver",
+    "62": "Tamamo",
+    "90": "Nero (Bride)",
+    "106": "Jalter",
+    "150": "Merlin",
+    "215": "Skadi",
+    "241": "Sima Yi (Reines)",
+    "284": "Artoria (Caster)",
+    "297": "Douman",
+    "314": "Koyanskaya",
+    "316": "Oberon",
+    "334": "Koyanskaya of the Darkness (Foreigner)",
+    "353": "Lady Avalon",
+    "357": "Skadi (Ruler)",
+    "388": "Chloe (Avenger)",
+    "421": "BB Dubai",
+    "426": "Kazuradrop"
+  },
+  "ces": {
+    "34": "Kaleidoscope.png",
+    "48": "Black Grail.png",
+    "62": "GudaGuda Poster Girl.png",
+    "80": "Mona Lisa.png",
+    "261": "Golden Sumo.png",
+    "330": "Chaldea Lunchtime.png",
+    "390": "Holy Night Supper.png",
+    "683": "Aerial Drive.png",
+    "871": "Painting Summer.png",
+    "910": "Chaldea Teatime.png",
+    "988": "Bella Lisa.png",
+    "1121": "Chaldea Dinnertime.png",
+    "1949": "From NFF with Love.png",
+    "2020": "Chaldea Morning.png",
+    "2142": "Secret Mission.png"
+  }
+}
