@@ -7,6 +7,11 @@ const files = {
   'vritra.json': '/nice/NA/servant/300?lore=false',
   'ibuki.json': '/nice/NA/servant/299?lore=false', // damageNpPierce + addDamage passive
   'skadi.json': '/nice/NA/servant/215?lore=false',
+  'koyanskaya-light.json': '/nice/NA/servant/314?lore=false', // trigger buff -> skill 966533
+  'super-orion.json': '/nice/NA/servant/272?lore=false', // trigger buff -> skill 964095
+  // Skills run by trigger buffs (build-data resolves them the same way).
+  'skill-966533.json': '/nice/NA/skill/966533',
+  'skill-964095.json': '/nice/NA/skill/964095',
   'kaleidoscope.json': '/nice/NA/equip/34',
   'mc-combat.json': '/nice/NA/MC/20',
   'quest-prison-ruins.json': '/nice/NA/quest/93030214/3',

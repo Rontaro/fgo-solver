@@ -7,6 +7,10 @@ import siegfried from '../../test/fixtures/siegfried.json';
 import vritra from '../../test/fixtures/vritra.json';
 import ibuki from '../../test/fixtures/ibuki.json';
 import skadi from '../../test/fixtures/skadi.json';
+import koyanskaya from '../../test/fixtures/koyanskaya-light.json';
+import superOrion from '../../test/fixtures/super-orion.json';
+import skill966533 from '../../test/fixtures/skill-966533.json';
+import skill964095 from '../../test/fixtures/skill-964095.json';
 import { compactServant, compactCE, compactMC, convertFunctions } from './compact';
 
 describe('compactServant', () => {
@@ -128,7 +132,7 @@ describe('convertFunctions', () => {
     }
     for (const t of ['upFuncHpReduce', 'upNonresistInstantdeath', 'avoidState', 'downGainHp']) ignored(buff(t, 'enemy'));
     ignored(func('displayBuffstring', 'enemy'));
-    expect(run([buff('upFuncHpReduce', 'self')]).unsupported).toEqual(['buff:upFuncHpReduce']);
+    ignored(buff('upFuncHpReduce', 'self')); // DoT received: allies are never under a DoT in the model
     expect(run([buff('downTolerance', 'enemy')])).toEqual({ out: [], unsupported: [] });
   });
   it('without a lookup, skill-triggering buffs stay unsupported (old behaviour)', () => {
@@ -336,6 +340,20 @@ describe('popular farming servants (real fixtures)', () => {
     expect(s.np).toBeNull();
     expect(s.skills[0].effects[0]).toMatchObject({ kind: 'cardUp', target: 'ptOne', cards: ['quick'] });
     expect(s.skills[2].effects[0]).toMatchObject({ kind: 'gainNp', target: 'ptOne' });
+  });
+  // Lookup built from saved /nice/NA/skill/{id} fixtures, like build-data does.
+  const lookup = new Map<number, any>([skill966533, skill964095].map((k: any) => [k.id, k]));
+  it('Koyanskaya of Light: NP-gain trigger resolved and ignored, simulable', () => {
+    expect(compactServant(koyanskaya as any).unsupported)
+      .toEqual(['buff:commandattackAfterFunctionMainOnly']); // without a lookup: old behaviour
+    const s = compactServant(koyanskaya as any, lookup);
+    expect(s.unsupported).toEqual([]);
+    expect(s.np).toMatchObject({ card: 'buster', aoe: true });
+  });
+  it('Super Orion: crit trigger resolved, poison demerit ignored, simulable (self-buff NP: np null)', () => {
+    const s = compactServant(superOrion as any, lookup);
+    expect(s.unsupported).toEqual([]);
+    expect(s.np).toBeNull();
   });
   it('a form change anywhere in the kit marks the servant unsupported', () => {
     const tf = { funcType: 'transformServant', funcTargetType: 'self', funcTargetTeam: 'playerAndEnemy', functvals: [], buffs: [], svals: [{ Rate: 5000, Value: 1 }] };

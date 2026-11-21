@@ -69,8 +69,12 @@ const IGNORED_BUFFS_ALLY = new Set([
   'downCriticalRateDamageTaken', 'downStarweight', 'upGrantInstantdeath', 'avoidInstantdeath',
   'downTolerance',
   // Changes field traits: none of our modelled effects reads the field (field
-  // conditions are reported as cond:*).
+  // conditions are dropped as conditional).
   'fieldIndividuality',
+  // Stronger DoT received by the holder (Super Orion's "Corroding Poison"
+  // demerit): our servants are never under a DoT in the model (enemies do not
+  // act, and reduceHp on an ally is unsupported), so it never applies.
+  'upFuncHpReduce',
 ]);
 // On enemies: only effects that help us (weaker / stunned / slower enemies).
 // Ignoring them under-estimates our damage, which is the prudent direction.

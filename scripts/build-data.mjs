@@ -1,8 +1,8 @@
 // Build-time data generation: fetches Atlas Academy exports and writes
 // compact JSON to public/data/{NA,JP}/. Reuses src/data/compact.ts via
 // Node 24's built-in type stripping (no flag, no tsx).
-import { writeFile, mkdir, stat } from 'node:fs/promises';
-import { compactServant, compactCE, compactMC } from '../src/data/compact.ts';
+import { writeFile, readFile, mkdir, stat } from 'node:fs/promises';
+import { compactServant, compactCE, compactMC, triggerSkillIds } from '../src/data/compact.ts';
 
 const BASE = 'https://api.atlasacademy.io';
 const REGIONS = ['NA', 'JP'];
@@ -15,6 +15,57 @@ async function get(path) {
   const res = await fetch(BASE + path, { headers: HEADERS });
   if (res.status !== 200) throw new Error(`GET ${path} -> HTTP ${res.status} ${res.statusText}`);
   return res.json();
+}
+
+// --- Skills run by trigger buffs (attackAfterFunction, delayFunction, ...) ---
+// The exports only carry the triggered skill's id, so each one is fetched once
+// from /nice/{region}/skill/{id}, sequentially, and cached on disk keyed by the
+// Atlas data hash: reruns on the same data version make no skill requests.
+const CACHE_DIR = 'node_modules/.cache/fgo-solver';
+const TRIGGER_DEPTH = 2; // same limit as compact.ts: a trigger inside a triggered skill
+
+function* functionsOf(entities) {
+  for (const e of entities) {
+    for (const k of ['skills', 'classPassive', 'noblePhantasms']) {
+      for (const s of e[k] ?? []) yield* s.functions ?? [];
+    }
+  }
+}
+
+async function triggerLookup(region, hash, entities) {
+  const file = `${CACHE_DIR}/trigger-skills-${region}.json`;
+  let cache = {};
+  try {
+    const c = JSON.parse(await readFile(file, 'utf8'));
+    if (c.hash === hash) cache = c.skills;
+  } catch { /* no cache yet */ }
+  const lookup = new Map();
+  let fetched = 0, missing = 0;
+  let ids = new Set();
+  for (const f of functionsOf(entities)) for (const id of triggerSkillIds(f)) ids.add(id);
+  for (let depth = 0; depth < TRIGGER_DEPTH && ids.size; depth++) {
+    const next = new Set();
+    for (const id of ids) {
+      if (lookup.has(id)) continue;
+      let skill = cache[id];
+      if (skill === undefined) {
+        const res = await fetch(`${BASE}/nice/${region}/skill/${id}`, { headers: HEADERS });
+        if (res.status === 404) skill = null; // unknown id: compact.ts reports trigger:...:missing
+        else if (res.status !== 200) throw new Error(`GET skill ${id} -> HTTP ${res.status}`);
+        else { const s = await res.json(); skill = { id: s.id, functions: s.functions }; }
+        cache[id] = skill;
+        fetched++;
+      }
+      if (skill === null) { missing++; continue; }
+      lookup.set(id, skill);
+      for (const f of skill.functions) for (const x of triggerSkillIds(f)) if (!lookup.has(x)) next.add(x);
+    }
+    ids = next;
+  }
+  await mkdir(CACHE_DIR, { recursive: true });
+  await writeFile(file, JSON.stringify({ hash, skills: cache }));
+  console.log(`[${region}] trigger skills: ${lookup.size} resolved, ${fetched} fetched, ${missing} missing`);
+  return lookup;
 }
 
 // The class attack-rate export also carries numeric class-id keys ("98",
@@ -77,20 +128,18 @@ async function buildRegion(region) {
   if (!info) throw new Error(`/info has no entry for ${region}`);
   await write('version.json', { hash: info.hash, timestamp: info.timestamp });
 
-  console.log(`[${region}] servants`);
-  const servants = (await get(`/export/${region}/nice_servant.json`))
-    .filter((s) => (s.type === 'normal' || s.type === 'heroine') && s.collectionNo > 0)
-    .map(compactServant);
+  console.log(`[${region}] servants, craft essences, mystic codes`);
+  const rawServants = (await get(`/export/${region}/nice_servant.json`))
+    .filter((s) => (s.type === 'normal' || s.type === 'heroine') && s.collectionNo > 0);
+  const rawCes = (await get(`/export/${region}/nice_equip.json`)).filter((e) => e.type === 'servantEquip');
+  const rawMcs = await get(`/export/${region}/nice_mystic_code.json`);
+  const triggers = await triggerLookup(region, info.hash, [...rawServants, ...rawCes, ...rawMcs]);
+
+  const servants = rawServants.map((s) => compactServant(s, triggers));
   await write('servants.json', servants);
-
-  console.log(`[${region}] craft essences`);
-  const ces = (await get(`/export/${region}/nice_equip.json`))
-    .filter((e) => e.type === 'servantEquip')
-    .map(compactCE);
+  const ces = rawCes.map((e) => compactCE(e, triggers));
   await write('ces.json', ces);
-
-  console.log(`[${region}] mystic codes`);
-  const mcs = (await get(`/export/${region}/nice_mystic_code.json`)).map(compactMC);
+  const mcs = rawMcs.map((m) => compactMC(m, triggers));
   await write('mcs.json', mcs);
 
   console.log(`[${region}] constants`);
