@@ -21,7 +21,7 @@ export interface RawStage {
   wave: number; enemyFieldPosCount?: number | null; call?: readonly number[];
   /** 1-based field slots that are never refilled. */
   NoEntryIds?: readonly number[] | null;
-  originalScript?: { enemyEntryOrder?: readonly number[] } | null;
+  originalScript?: { enemyEntryOrder?: readonly number[]; enemyAutoTargetOrder?: readonly number[] } | null;
   enemies: readonly RawEnemy[];
 }
 export interface RawQuest { flags?: readonly string[]; stages: readonly RawStage[]; }
@@ -50,9 +50,12 @@ export class UnsupportedQuestError extends Error {
  * NP kills it or how much NP we gain: debuff resist / immunity (we never debuff
  * enemies in the model), its own attack / crit / star / charge / card buffs
  * and flat damage plus, taunt, regen and heal-received (it dies before the
- * turn ends), crit damage taken (we never crit), added traits (ignoring them
- * only hides trait bonuses we would get), and triggers that fire on its own
- * attack or its own turn (it has neither).
+ * turn ends), critical stars from hits on it (stars are not modelled), added
+ * traits (ignoring them only hides trait bonuses we would get), triggers that
+ * fire on its own attack or at its own turn start / end (it has neither), and
+ * delayFunction, which fires at the end of a turn, its own or ours: safe only
+ * because every wave dies during our turn, before any turn ends (endTurn
+ * enforces it).
  *
  * Modelled instead: defence up (upDefence) and flat damage cut
  * (subSelfdamage) enter our damage formula, at the highest value over the
@@ -70,7 +73,8 @@ const ENEMY_SELF_BUFFS_OK = new Set([
   'upCriticaldamage', 'upCriticalrate', 'upCriticalpoint', 'upStarweight', 'upDropstar',
   'upHate', 'regainHp', 'regainNp', 'regainStar', 'upGainHp', 'upGivegainHp',
   'downTolerance', 'downCommandall', 'addDamage', 'addIndividuality', 'downCriticalStarDamageTaken',
-  // Chaldea: run by the attacker after / before its own attack, or at its own turn start / end.
+  // Chaldea: run by the attacker after / before its own attack, or at its own turn start / end;
+  // delayFunction at a turn end (ours too), when the wave is already dead.
   'commandattackAfterFunction', 'commandattackBeforeFunction', 'attackAfterFunction', 'attackBeforeFunction',
   'selfturnstartFunction', 'selfturnendFunction', 'delayFunction',
 ]);
@@ -118,7 +122,7 @@ function checkPassive(where: string, funcs: readonly RawFunc[], out: string[], s
  * reinforcement enters next turn, so the wave cannot die on the turn it
  * appears: rejected.
  */
-function layout(st: RawStage, first: boolean, enemies: readonly RawEnemy[], w: string, out: string[]): WaveLayout | undefined {
+function layout(st: RawStage, first: boolean, immediate: boolean, enemies: readonly RawEnemy[], w: string, out: string[]): WaveLayout | undefined {
   const slots = st.enemyFieldPosCount ?? 3;
   const field: number[] = Array.from({ length: slots }, () => -1);
   const reserve: number[] = [];
@@ -127,19 +131,40 @@ function layout(st: RawStage, first: boolean, enemies: readonly RawEnemy[], w: s
     else if (e.deckId >= 1 && field[e.deckId - 1] < 0) field[e.deckId - 1] = i;
     else out.push(`${w}: deckId ${e.deckId} is not a free slot (${e.name})`);
   });
+  // Auto target (Chaldea's getNonNullTargetIndex): first living slot, or the
+  // stage's enemyAutoTargetOrder[slot]; on enemyImmediateAppear quests the
+  // lowest uniqueId, i.e. the order of stage.enemies.
+  const slotOrder = (f: readonly number[], pri?: readonly number[]) => f.map((_, i) => i)
+    .sort((a, b) => (pri ? (pri[a] ?? 0) - (pri[b] ?? 0) : 0) || a - b).flatMap((i) => (f[i] >= 0 ? [f[i]] : []));
+  const byRaw = () => enemies.map((_, i) => i).sort((a, b) => st.enemies.indexOf(enemies[a]) - st.enemies.indexOf(enemies[b]));
+  const autoOrder = st.originalScript?.enemyAutoTargetOrder;
+  if (autoOrder && autoOrder.length !== slots) out.push(`${w}: enemyAutoTargetOrder does not match the ${slots} slots`);
+  const isPlain = (xs: readonly number[]) => xs.every((x, i) => x === i);
   if (reserve.length === 0) {
-    // Every enemy in slot i = its index: the default layout.
-    return field.every((x, i) => x === (i < enemies.length ? i : -1)) ? undefined : { field, reserve, refill: [] };
+    const retarget = immediate ? byRaw() : slotOrder(field, autoOrder);
+    // Every enemy in slot i = its index and index-order targeting: the default layout.
+    if (field.every((x, i) => x === (i < enemies.length ? i : -1)) && isPlain(retarget)) return undefined;
+    return { field, reserve, refill: [], retarget };
   }
+  // Refill order: Chaldea sorts the enemyEntryOrder entries by value and
+  // refills their positions; without it, slot order.
   const order = st.originalScript?.enemyEntryOrder;
+  if (order && order.length > slots) out.push(`${w}: enemyEntryOrder longer than the ${slots} slots`);
   const noEntry = new Set(st.NoEntryIds ?? []);
-  const refill = field.map((_, i) => i)
-    .sort((a, b) => (order ? (order[a] ?? 0) - (order[b] ?? 0) : 0) || a - b)
-    .filter((i) => !noEntry.has(i + 1));
+  const refill = (order ? order.map((_, i) => i).sort((a, b) => order[a] - order[b] || a - b) : field.map((_, i) => i))
+    .filter((i) => i < slots && !noEntry.has(i + 1));
   if (refill.length === 0) out.push(`${w}: reinforcements with no slot to enter`);
   let r = 0;
   if (first) for (const slot of refill) if (field[slot] < 0 && r < reserve.length) field[slot] = reserve[r++];
-  return { field, reserve: reserve.slice(r), refill };
+  const left = reserve.slice(r);
+  // Reserve enemy k enters after NP floor(k / refill slots) + 1 at the earliest
+  // (refills only follow an NP); entering after the 3rd NP of the turn it cannot be hit.
+  if (refill.length && left.length > 2 * refill.length) {
+    out.push(`${w}: ${left.length} reinforcements on ${refill.length} refill slot(s) need more than 3 NPs`);
+  }
+  // Without the flag nothing enters during the turn (rejected if a reserve is left): slots are fixed.
+  const retarget = immediate ? byRaw() : slotOrder(field, autoOrder);
+  return { field, reserve: left, refill, ...(!isPlain(retarget) && { retarget }) };
 }
 
 /**
@@ -157,7 +182,7 @@ export function questFromAtlas(raw: RawQuest): Quest {
     if (st.call?.length) reasons.push(`${w}: call deck`);
     for (const e of st.enemies) if (e.deck !== 'enemy') reasons.push(`${w}: ${e.deck} deck (${e.name})`);
     const enemies = st.enemies.filter((e) => e.deck === 'enemy').sort((a, b) => a.deckId - b.deckId);
-    const lay = layout(st, si === 0, enemies, w, reasons);
+    const lay = layout(st, si === 0, immediate, enemies, w, reasons);
     if (lay?.reserve.length && !immediate) {
       reasons.push(`${w}: reinforcements enter next turn (${enemies.length} enemies, ${st.enemyFieldPosCount ?? 3} on field)`);
     }

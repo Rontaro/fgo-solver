@@ -46,7 +46,8 @@ describe('questFromAtlas', () => {
   it('wave 1 fills its empty slots at the turn start, even without the flag', () => {
     const q = questFromAtlas(quest({ enemies: [mk({ deckId: 1, hp: 1 }), mk({ deckId: 3, hp: 3 }), mk({ deckId: 5, hp: 5 })] }));
     expect(q.waves[0].map((e) => e.hp)).toEqual([1, 3, 5]);
-    expect(q.layouts?.[0]).toEqual({ field: [0, 2, 1], reserve: [], refill: [0, 1, 2] });
+    // Without the flag the auto target is the first living slot.
+    expect(q.layouts?.[0]).toEqual({ field: [0, 2, 1], reserve: [], refill: [0, 1, 2], retarget: [0, 2, 1] });
   });
   it('models reinforcements on enemyImmediateAppear quests: field, reserve in deckId order, refill slots', () => {
     const hp = (deckId: number) => mk({ deckId, hp: deckId * 100 });
@@ -56,10 +57,24 @@ describe('questFromAtlas', () => {
       { enemies: [hp(1), hp(2), hp(3), hp(4)], originalScript: { enemyEntryOrder: [3, 1, 2] } },
     ), flags: ['enemyImmediateAppear'] });
     expect(q.waves[0].map((e) => e.hp)).toEqual([100, 200, 300, 400, 500]);
-    expect(q.layouts?.[0]).toEqual({ field: [0, 1, 2], reserve: [3, 4], refill: [0, 1, 2] });
+    // Auto target on these quests: lowest uniqueId = order of stage.enemies.
+    expect(q.layouts?.[0]).toEqual({ field: [0, 1, 2], reserve: [3, 4], refill: [0, 1, 2], retarget: [4, 0, 3, 1, 2] });
     // Later wave: slot 0 stays empty until the first refill; slot 3 never refills.
     expect(q.layouts?.[1]).toEqual({ field: [-1, 0, -1], reserve: [1], refill: [0, 1] });
     expect(q.layouts?.[2]).toEqual({ field: [0, 1, 2], reserve: [3], refill: [1, 2, 0] });
+  });
+  it('builds refill from enemyEntryOrder as Chaldea does; rejects bad lengths and unreachable reserves', () => {
+    const flags = ['enemyImmediateAppear'];
+    const four = [1, 2, 3, 4].map((deckId) => mk({ deckId }));
+    const short = questFromAtlas({ ...quest({ enemies: four, originalScript: { enemyEntryOrder: [2, 1] } }), flags });
+    expect(short.layouts?.[0]?.refill).toEqual([1, 0]);
+    expect(reasons({ ...quest({ enemies: four, originalScript: { enemyEntryOrder: [1, 2, 3, 4] } }), flags })[0])
+      .toMatch(/enemyEntryOrder longer/);
+    expect(reasons(quest({ enemies: [mk()], originalScript: { enemyAutoTargetOrder: [1, 2] } }))[0]).toMatch(/enemyAutoTargetOrder/);
+    // 1 refill slot, 3 in reserve: the 3rd enters after the 3rd NP at best.
+    const five = [1, 2, 3, 4, 5, 6].map((deckId) => mk({ deckId }));
+    expect(reasons({ ...quest({ enemies: five, NoEntryIds: [2, 3] }), flags })[0]).toMatch(/need more than 3 NPs/);
+    expect(reasons({ ...quest({ enemies: five.slice(0, 5), NoEntryIds: [2, 3] }), flags })).toEqual([]);
   });
   it('rejects reinforcements with every slot in NoEntryIds and duplicate deckIds', () => {
     const flags = ['enemyImmediateAppear'];
