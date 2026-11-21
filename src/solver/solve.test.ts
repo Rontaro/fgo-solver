@@ -433,3 +433,20 @@ describe('solve: reinforcements', () => {
     }
   });
 });
+
+describe('solve: enemy defence', () => {
+  it('defUp and dmgCut can make a wave need a buff; the bound agrees with brute force', () => {
+    const s = supp(9501, skill(1, 7, eff('atkUp', 'ptAll', 500, 3)));
+    const team = [altK('a'), member(s, 's')];
+    const hp = 20000;
+    const plain = run(team, mcCombat, { waves: [[enemy(hp)]] }).solutions[0].actions;
+    expect(plain).toBe(0);
+    const def: Quest = { waves: [[{ ...enemy(hp), defUp: 500, dmgCut: 3000 }]] };
+    const b = againstBrute(team, def, mcCombat);
+    expect(b).toBeGreaterThan(0);
+    expect(b).toBeLessThan(Infinity);
+    const tough: Quest = { waves: [[{ ...enemy(hp), defUp: 1000, dmgCut: 100_000 }]] };
+    expect(againstBrute(team, tough, mcCombat)).toBe(Infinity);
+    expect(run(team, mcCombat, tough).stats.npFires).toBe(0);
+  });
+});

@@ -131,8 +131,8 @@ export function damageBound(s: BattleState, c: BoundCtx): BoundFail | null {
         const se = np.seTraits && np.seMult && np.seTraits.some((t) => en.traits.includes(t)) ? maxRow(np.seMult, u.npLv) : 1000;
         sums[i].push(npDamage({
           atk: u.atk, mult, card: np.card, cardMod: m.cardMod, classAtk: a.classAtk, triangle: a.triangle,
-          attribute: a.attribute, atkMod: m.atkMod, defMod: 0, npDmgMod: m.npDmgMod, powerMod: m.powerMod,
-          seMult: se, dmgPlus: m.dmgPlus,
+          attribute: a.attribute, atkMod: m.atkMod, defMod: en.defUp ?? 0, npDmgMod: m.npDmgMod, powerMod: m.powerMod,
+          seMult: se, dmgPlus: m.dmgPlus - (en.dmgCut ?? 0),
         }));
       });
     }

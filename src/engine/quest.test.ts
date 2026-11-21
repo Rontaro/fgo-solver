@@ -81,7 +81,8 @@ describe('questFromAtlas', () => {
     ]);
   });
   it('rejects enemy self-buffs that reduce our damage or keep it alive, and lists every reason', () => {
-    const bad = ['upDefence', 'subSelfdamage', 'specialdefence', 'invincible', 'avoidance', 'guts', 'addMaxhp', 'mysteryBuff'];
+    const bad = ['specialdefence', 'invincible', 'avoidance', 'guts', 'addMaxhp', 'overwriteClassRelation',
+      'deadFunction', 'damageFunction', 'entryFunction', 'wavestartFunction', 'mysteryBuff'];
     const q = quest({ enemies: [mk({ classPassive: passive(bad) })] });
     const r = reasons(q);
     for (const t of bad) expect(r).toContainEqual(expect.stringContaining(`buff ${t}`));
@@ -101,8 +102,21 @@ describe('questFromAtlas', () => {
     expect(reasons(quest({ enemies: [mk({ classPassive: passive('downAtk', 'enemyAll') })] }))[0]).toMatch(/on our side/);
     expect(reasons(quest({ enemies: [mk({ classPassive: passive('entryFunction') })] }))[0]).toMatch(/buff entryFunction/);
   });
-  it('allows harmless enemy self-buffs (attack, crit, debuff resist, regen)', () => {
-    const ok = ['upAtk', 'upCriticaldamage', 'upTolerance', 'regainHp', 'upHate'];
+  it('models passive defence up and damage cut: max over levels, side-wide ones on every enemy', () => {
+    const fn = (type: string, values: number[], funcTargetType = 'self') =>
+      ({ funcType: 'addState', funcTargetType, buffs: [{ type }], svals: values.map((Value) => ({ Value })) });
+    const cp = (...functions: ReturnType<typeof fn>[]) => ({ classPassive: [{ name: 'P', functions }], addPassive: [] });
+    const q = questFromAtlas(quest({ enemies: [
+      mk({ deckId: 1, classPassive: cp(fn('upDefence', [100, 200]), fn('subSelfdamage', [500])) }),
+      mk({ deckId: 2, classPassive: cp(fn('upDefence', [0])) }),
+      mk({ deckId: 3, classPassive: cp(fn('upDefence', [50], 'ptOtherFull')) }),
+    ] }));
+    expect(q.waves[0].map((e) => [e.defUp, e.dmgCut])).toEqual([[250, 500], [50, undefined], [50, undefined]]);
+    expect(reasons(quest({ enemies: [mk({ classPassive: cp(fn('upDefence', [-100])) })] }))[0]).toMatch(/negative value/);
+  });
+  it('allows harmless enemy self-buffs (attack, crit, debuff resist, regen, own-attack triggers)', () => {
+    const ok = ['upAtk', 'upCriticaldamage', 'upTolerance', 'regainHp', 'upHate', 'addDamage', 'addIndividuality',
+      'downCommandall', 'commandattackAfterFunction', 'selfturnendFunction', 'delayFunction'];
     expect(reasons(quest({ enemies: [mk({ classPassive: passive(ok) })] }))).toEqual([]);
   });
   it('rejects unknown non-buff functions in a passive', () => {

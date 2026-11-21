@@ -22,6 +22,8 @@ export interface Unit {
 export interface Enemy {
   readonly hp: number; readonly className: string; readonly attribute: string;
   readonly traits: readonly number[]; readonly tdRate: number;
+  /** Defence up from its passives (permille, upDefence), and flat damage cut (subSelfdamage). */
+  readonly defUp?: number; readonly dmgCut?: number;
 }
 /** Constants resolved for one unit against one enemy (permille). */
 export interface Affinity { readonly classAtk: number; readonly triangle: number; readonly attribute: number; }

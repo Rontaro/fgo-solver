@@ -285,3 +285,14 @@ describe('fireNp: reinforcements', () => {
     expect(r2.state.field).toEqual([0, 4, 2]);
   });
 });
+
+describe('fireNp: enemy defence', () => {
+  it('defUp lowers the attack term and dmgCut is taken off the total, never below 0', () => {
+    const s = withEnemies(withGauge(battle(altria, { npLv: 5 }), 10000),
+      enemy({ defUp: 200 }), enemy({ dmgCut: 1000 }), enemy({ dmgCut: 10_000_000 }));
+    const r = fireNp(s, 'u');
+    expect(10_000_000 - r.state.enemies[0].hp).toBe(npDamage({ ...dmgBase, defMod: 200 }));
+    expect(10_000_000 - r.state.enemies[1].hp).toBe(npDamage(dmgBase) - 1000);
+    expect(r.state.enemies[2].hp).toBe(10_000_000);
+  });
+});

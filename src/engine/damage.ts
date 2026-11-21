@@ -20,7 +20,7 @@ export interface DamageInput {
   npDmgMod: number;   // NP damage up
   powerMod: number;   // special attack / power mod
   seMult: number;     // supereffective NP multiplier (1000 = none)
-  dmgPlus?: number;   // flat additive damage (addDamage)
+  dmgPlus?: number;   // flat additive damage (addDamage) minus the enemy's damage cut
 }
 
 export function npDamage(i: DamageInput): number {
@@ -30,5 +30,5 @@ export function npDamage(i: DamageInput): number {
     * Math.max(0, 1 + clamp(k(i.atkMod), -1, 4) - clamp(k(i.defMod), -1, 1))
     * Math.max(0.001, 1 + clamp(k(i.powerMod), -1, 10) + clamp(k(i.npDmgMod), -1, 5))
     * k(i.seMult);
-  return Math.floor(v) + (i.dmgPlus ?? 0);
+  return Math.max(0, Math.floor(v) + (i.dmgPlus ?? 0));
 }

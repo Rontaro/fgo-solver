@@ -4,6 +4,8 @@ import type { Enemy, Quest, WaveLayout } from './state';
 export interface RawFunc {
   funcType: string; funcTargetType: string; funcTargetTeam?: string;
   buffs?: readonly { type: string }[];
+  /** Per skill level. */
+  svals?: readonly { Value?: number }[];
 }
 export interface RawSkill { name?: string; functions: readonly RawFunc[]; }
 export interface RawEnemy {
@@ -46,23 +48,42 @@ export class UnsupportedQuestError extends Error {
  *
  * Allow-list of buffs an enemy may hold on itself without changing whether our
  * NP kills it or how much NP we gain: debuff resist / immunity (we never debuff
- * enemies in the model), its own attack / crit / star / charge buffs, taunt,
- * regen and heal-received (it dies before the turn ends). Anything else
- * (defence, damage cut, special defence, invincible, evade, guts, max HP,
- * card resist, unknown) makes the quest unsupported.
+ * enemies in the model), its own attack / crit / star / charge / card buffs
+ * and flat damage plus, taunt, regen and heal-received (it dies before the
+ * turn ends), crit damage taken (we never crit), added traits (ignoring them
+ * only hides trait bonuses we would get), and triggers that fire on its own
+ * attack or its own turn (it has neither).
+ *
+ * Modelled instead: defence up (upDefence) and flat damage cut
+ * (subSelfdamage) enter our damage formula, at the highest value over the
+ * skill levels and regardless of conditions, rate, turns or count (more
+ * defence only lowers our damage). One aimed at its side (not self) is given
+ * to every enemy of the wave.
+ *
+ * Anything else (special defence, invincible, evade, guts, max HP, card
+ * resist, class relation changes, death / damage / entry / wave start
+ * triggers, unknown) makes the quest unsupported.
  */
 const ENEMY_SELF_BUFFS_OK = new Set([
   'avoidState', 'upTolerance', 'upToleranceSubstate', 'upResistInstantdeath', 'upNonresistInstantdeath',
   'upAtk', 'upCommandall', 'upNpdamage', 'upDamage', 'upChagetd', 'upGrantstate',
   'upCriticaldamage', 'upCriticalrate', 'upCriticalpoint', 'upStarweight', 'upDropstar',
   'upHate', 'regainHp', 'regainNp', 'regainStar', 'upGainHp', 'upGivegainHp',
+  'downTolerance', 'downCommandall', 'addDamage', 'addIndividuality', 'downCriticalStarDamageTaken',
+  // Chaldea: run by the attacker after / before its own attack, or at its own turn start / end.
+  'commandattackAfterFunction', 'commandattackBeforeFunction', 'attackAfterFunction', 'attackBeforeFunction',
+  'selfturnstartFunction', 'selfturnendFunction', 'delayFunction',
 ]);
+/** Buffs that enter our damage formula (see Enemy.defUp / dmgCut). */
+const MODELLED: Record<string, 'defUp' | 'dmgCut'> = { upDefence: 'defUp', subSelfdamage: 'dmgCut' };
+interface Defence { defUp: number; dmgCut: number; }
 // Non-buff functions on its own side that cannot change our damage or its HP pool.
 const ENEMY_SELF_FUNCS_OK = new Set(['none', 'gainStar', 'gainNp', 'hastenNpturn', 'gainHp', 'gainHpPer']);
-const OWN_SIDE = new Set(['self', 'ptAll', 'ptOne', 'ptOther', 'ptFull', 'ptAnother', 'ptRandom', 'ptOneOther']);
+const OWN_SIDE = new Set(['self', 'ptAll', 'ptOne', 'ptOther', 'ptFull', 'ptOtherFull', 'ptAnother', 'ptRandom', 'ptOneOther']);
 const OTHER_SIDE = /^enemy/;
 
-function checkPassive(where: string, funcs: readonly RawFunc[], out: string[]): void {
+/** self / side: defence the passive gives its holder / every enemy of the wave. */
+function checkPassive(where: string, funcs: readonly RawFunc[], out: string[], self: Defence, side: Defence): void {
   for (const f of funcs) {
     // team 'player': only runs when a player-side unit casts it.
     if (f.funcTargetTeam === 'player') continue;
@@ -73,7 +94,12 @@ function checkPassive(where: string, funcs: readonly RawFunc[], out: string[]): 
     if (!OWN_SIDE.has(f.funcTargetType)) { out.push(`${where}: target ${f.funcTargetType}`); continue; }
     if (f.funcType === 'addState' || f.funcType === 'addStateShort') {
       const t = f.buffs?.[0]?.type ?? 'none';
-      if (!ENEMY_SELF_BUFFS_OK.has(t)) out.push(`${where}: buff ${t}`);
+      const k = MODELLED[t];
+      if (k) {
+        const vs = (f.svals ?? []).map((x) => x.Value ?? 0);
+        if (vs.some((v) => v < 0)) out.push(`${where}: buff ${t} with a negative value`);
+        else (f.funcTargetType === 'self' ? self : side)[k] += Math.max(0, ...vs);
+      } else if (!ENEMY_SELF_BUFFS_OK.has(t)) out.push(`${where}: buff ${t}`);
     } else if (!ENEMY_SELF_FUNCS_OK.has(f.funcType)) out.push(`${where}: ${f.funcType}`);
   }
 }
@@ -136,16 +162,23 @@ export function questFromAtlas(raw: RawQuest): Quest {
       reasons.push(`${w}: reinforcements enter next turn (${enemies.length} enemies, ${st.enemyFieldPosCount ?? 3} on field)`);
     }
     layouts.push(lay);
-    for (const e of enemies) {
+    const side: Defence = { defUp: 0, dmgCut: 0 };
+    const own = enemies.map((e) => {
+      const self: Defence = { defUp: 0, dmgCut: 0 };
       const where = `${w} ${e.name}`;
       for (const p of [...(e.classPassive?.classPassive ?? []), ...(e.classPassive?.addPassive ?? [])]) {
-        checkPassive(`${where} passive ${p.name ?? ''}`.trim(), p.functions, reasons);
+        checkPassive(`${where} passive ${p.name ?? ''}`.trim(), p.functions, reasons, self, side);
       }
-    }
-    return enemies.map((e): Enemy => ({
-      hp: e.hp, className: e.svt.className, attribute: e.svt.attribute,
-      traits: e.traits.map((t) => t.id), tdRate: e.serverMod.tdRate,
-    }));
+      return self;
+    });
+    return enemies.map((e, i): Enemy => {
+      const defUp = own[i].defUp + side.defUp, dmgCut = own[i].dmgCut + side.dmgCut;
+      return {
+        hp: e.hp, className: e.svt.className, attribute: e.svt.attribute,
+        traits: e.traits.map((t) => t.id), tdRate: e.serverMod.tdRate,
+        ...(defUp > 0 && { defUp }), ...(dmgCut > 0 && { dmgCut }),
+      };
+    });
   });
   if (reasons.length) throw new UnsupportedQuestError([...new Set(reasons)]);
   return layouts.some((l) => l) ? { waves, layouts } : { waves };

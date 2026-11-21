@@ -79,8 +79,8 @@ export function fireNp(state: BattleState, unitKey: string, targetIndex?: number
     const damage = npDamage({
       atk: u.atk, mult, card: np.card, cardMod: m.cardMod,
       classAtk: a.classAtk, triangle: a.triangle, attribute: a.attribute,
-      atkMod: m.atkMod, defMod: 0, npDmgMod: m.npDmgMod, powerMod: m.powerMod,
-      seMult: se, dmgPlus: m.dmgPlus,
+      atkMod: m.atkMod, defMod: t.defUp ?? 0, npDmgMod: m.npDmgMod, powerMod: m.powerMod,
+      seMult: se, dmgPlus: m.dmgPlus - (t.dmgCut ?? 0),
     });
     minMargin = Math.min(minMargin, damage / t.hp);
     const { hits, hpLeft } = hitsOnEnemy(t.hp, splitHits(damage, np.hits));
