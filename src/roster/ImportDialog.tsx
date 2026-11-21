@@ -6,13 +6,32 @@ interface Props {
   next: RosterDoc;
   onConfirm: () => void;
   onCancel: () => void;
+  warnings?: string[];
 }
 
-export function ImportDialog({ current, next, onConfirm, onCancel }: Props) {
+const WARN_OPEN_MAX = 5;
+
+function Warnings({ items }: { items: string[] }) {
+  const list = (
+    <ul className="mt-1 max-h-48 list-disc space-y-0.5 overflow-y-auto pl-5 text-xs text-amber-200/90">
+      {items.map((w, i) => <li key={i}>{w}</li>)}
+    </ul>
+  );
+  const title = `${items.length} avvisi`;
+  return (
+    <div className="mb-4 rounded border border-amber-900/60 bg-amber-950/30 px-3 py-2 text-sm text-amber-300">
+      {items.length > WARN_OPEN_MAX
+        ? <details><summary className="cursor-pointer">{title}</summary>{list}</details>
+        : <>{title}{list}</>}
+    </div>
+  );
+}
+
+export function ImportDialog({ current, next, onConfirm, onCancel, warnings }: Props) {
   const d = diffServants(current, next);
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true">
-      <div className="w-full max-w-sm rounded-lg border border-zinc-800 bg-zinc-900 p-5 shadow-xl">
+      <div className="w-full max-w-md rounded-lg border border-zinc-800 bg-zinc-900 p-5 shadow-xl">
         <h2 className="mb-3 text-lg font-semibold">Importa roster</h2>
         <p className="mb-3 text-sm text-zinc-400">
           Il roster attuale ({current.servants.length} servant) verrà sostituito da quello importato
@@ -23,6 +42,7 @@ export function ImportDialog({ current, next, onConfirm, onCancel }: Props) {
           <li><span className="text-amber-400">{d.changed}</span> modificati</li>
           <li><span className="text-red-400">{d.removed}</span> rimossi</li>
         </ul>
+        {warnings && warnings.length > 0 && <Warnings items={warnings} />}
         <div className="flex justify-end gap-2">
           <button onClick={onCancel} className="rounded bg-zinc-800 px-3 py-1.5 text-sm hover:bg-zinc-700">Annulla</button>
           <button onClick={onConfirm} className="rounded bg-sky-600 px-3 py-1.5 text-sm font-medium hover:bg-sky-500">Conferma</button>

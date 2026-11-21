@@ -1,0 +1,333 @@
+{
+  "version": 4,
+  "appVer": "2.6.0",
+  "curUserKey": 0,
+  "users": [
+    {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "name": "Main NA",
+      "isGirl": true,
+      "region": "na",
+      "dupServantMapping": {
+        "10000201": 2
+      },
+      "servants": {
+        "2": {
+          "cur": {
+            "favorite": true,
+            "ascension": 4,
+            "skills": [
+              10,
+              9,
+              8
+            ],
+            "appendSkills": [
+              0,
+              10,
+              0,
+              0,
+              0
+            ],
+            "costumes": {},
+            "grail": 2,
+            "fouHp5": 0,
+            "fouAtk5": 0,
+            "fouHp": 50,
+            "fouAtk": 50,
+            "fouHp3": 20,
+            "fouAtk3": 20,
+            "bondLimit": 10,
+            "npLv": 2
+          },
+          "priority": 1,
+          "bond": 0,
+          "equipCmdCodes": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "cmdCardStrengthen": null,
+          "grandSvt": false
+        },
+        "16": {
+          "cur": {
+            "favorite": true,
+            "ascension": 3,
+            "skills": [
+              4,
+              4,
+              4
+            ],
+            "appendSkills": [
+              1,
+              3,
+              0,
+              0,
+              0
+            ],
+            "costumes": {},
+            "grail": 0,
+            "fouHp5": 0,
+            "fouAtk5": 0,
+            "fouHp": 0,
+            "fouAtk": 0,
+            "fouHp3": 20,
+            "fouAtk3": 10,
+            "bondLimit": 10,
+            "npLv": 5
+          },
+          "priority": 1,
+          "bond": 0,
+          "equipCmdCodes": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "cmdCardStrengthen": null,
+          "grandSvt": false
+        },
+        "284": {
+          "cur": {
+            "favorite": false,
+            "ascension": 4,
+            "skills": [
+              10,
+              10,
+              10
+            ],
+            "appendSkills": [
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "costumes": {},
+            "grail": 0,
+            "fouHp5": 0,
+            "fouAtk5": 0,
+            "fouHp": 0,
+            "fouAtk": 0,
+            "fouHp3": 20,
+            "fouAtk3": 20,
+            "bondLimit": 10,
+            "npLv": 1
+          },
+          "priority": 1,
+          "bond": 0,
+          "equipCmdCodes": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "cmdCardStrengthen": null,
+          "grandSvt": false
+        },
+        "9999": {
+          "cur": {
+            "favorite": true,
+            "ascension": 4,
+            "skills": [
+              10,
+              10,
+              10
+            ],
+            "appendSkills": [
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "costumes": {},
+            "grail": 0,
+            "fouHp5": 0,
+            "fouAtk5": 5,
+            "fouHp": 0,
+            "fouAtk": 0,
+            "fouHp3": 20,
+            "fouAtk3": 20,
+            "bondLimit": 10,
+            "npLv": 1
+          },
+          "priority": 1,
+          "bond": 0,
+          "equipCmdCodes": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "cmdCardStrengthen": null,
+          "grandSvt": false
+        },
+        "10000201": {
+          "cur": {
+            "favorite": true,
+            "ascension": 2,
+            "skills": [
+              1,
+              1,
+              1
+            ],
+            "appendSkills": [
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "costumes": {},
+            "grail": 0,
+            "fouHp5": 0,
+            "fouAtk5": 0,
+            "fouHp": 0,
+            "fouAtk": 0,
+            "fouHp3": 20,
+            "fouAtk3": 20,
+            "bondLimit": 10,
+            "npLv": 1
+          },
+          "priority": 1,
+          "bond": 0,
+          "equipCmdCodes": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "cmdCardStrengthen": null,
+          "grandSvt": false
+        }
+      },
+      "classBoards": {},
+      "plans": [
+        {
+          "title": "",
+          "servants": {},
+          "limitEvents": {},
+          "mainStories": {},
+          "tickets": {},
+          "classBoards": {},
+          "recipes": {}
+        }
+      ],
+      "sameEventPlan": true,
+      "curSvtPlanNo": 0,
+      "items": {},
+      "itemsLeft": {},
+      "eventItemCalc": {},
+      "craftEssences": {
+        "34": {
+          "status": 2,
+          "lv": 100,
+          "limitCount": 4
+        },
+        "48": {
+          "status": 1,
+          "lv": 1,
+          "limitCount": 0
+        },
+        "1000": {
+          "status": 2,
+          "lv": 20,
+          "limitCount": 0
+        }
+      },
+      "cmdCodes": {},
+      "mysticCodes": {
+        "20": 10
+      },
+      "summons": [],
+      "myRoomMusic": [],
+      "lastImportId": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000002",
+      "name": "Alt JP",
+      "isGirl": true,
+      "region": "jp",
+      "dupServantMapping": {},
+      "servants": {
+        "2": {
+          "cur": {
+            "favorite": true,
+            "ascension": 4,
+            "skills": [
+              6,
+              6,
+              6
+            ],
+            "appendSkills": [
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "costumes": {},
+            "grail": 0,
+            "fouHp5": 0,
+            "fouAtk5": 0,
+            "fouHp": 0,
+            "fouAtk": 0,
+            "fouHp3": 20,
+            "fouAtk3": 20,
+            "bondLimit": 10,
+            "npLv": 1
+          },
+          "priority": 1,
+          "bond": 0,
+          "equipCmdCodes": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "cmdCardStrengthen": null,
+          "grandSvt": false
+        }
+      },
+      "classBoards": {},
+      "plans": [
+        {
+          "title": "",
+          "servants": {},
+          "limitEvents": {},
+          "mainStories": {},
+          "tickets": {},
+          "classBoards": {},
+          "recipes": {}
+        }
+      ],
+      "sameEventPlan": true,
+      "curSvtPlanNo": 0,
+      "items": {},
+      "itemsLeft": {},
+      "eventItemCalc": {},
+      "craftEssences": {},
+      "cmdCodes": {},
+      "mysticCodes": {},
+      "summons": [],
+      "myRoomMusic": [],
+      "lastImportId": null
+    }
+  ],
+  "itemAbundantValue": [
+    0,
+    0,
+    0
+  ],
+  "svtAscensionIcon": 1,
+  "preferAprilFoolIcon": false,
+  "customSvtIcon": {}
+}

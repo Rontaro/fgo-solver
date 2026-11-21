@@ -4,6 +4,7 @@ import { FaceIcon } from '../app/ServantIcon';
 import { ServantSearch } from '../app/ServantSearch';
 import { queryWords, servantScore } from '../data/search';
 import type { CompactServant } from '../data/types';
+import { type ChaldeaAccount, type ChaldeaOptions, parseChaldeaBackup, readChaldeaFile } from './chaldea';
 import { ImportDialog } from './ImportDialog';
 import { IdbRosterStore, RosterValidationError, exportJson, importJson } from './store';
 import type { OwnedServant, RosterDoc } from './types';
@@ -54,10 +55,13 @@ export function RosterPage() {
   const [filter, setFilter] = useState('');
   const [pendingImport, setPendingImport] = useState<RosterDoc | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
+  const [importWarnings, setImportWarnings] = useState<string[]>([]);
+  const [chaldeaPick, setChaldeaPick] = useState<{ raw: unknown; accounts: ChaldeaAccount[]; index: number } | null>(null);
   const [saving, setSaving] = useState(false);
   const pending = useRef<RosterDoc | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const fileInput = useRef<HTMLInputElement>(null);
+  const chaldeaInput = useRef<HTMLInputElement>(null);
 
   const flush = () => {
     clearTimeout(timer.current);
@@ -126,12 +130,43 @@ export function RosterPage() {
     if (!file) return;
     setImportError(null);
     try {
+      setImportWarnings([]);
       setPendingImport(importJson(await file.text(), region));
     } catch (e) {
       if (e instanceof RosterValidationError) setImportError(`Errore in ${e.path}: ${e.message.slice(e.path.length + 2)}`);
       else setImportError(e instanceof Error ? e.message : String(e));
     } finally {
       if (fileInput.current) fileInput.current.value = '';
+    }
+  };
+
+  const chaldeaOpts = (): ChaldeaOptions => ({
+    // rarity is read defensively: older cached data may not carry it
+    servants: new Map([...(servants?.values() ?? [])].map((s) => [s.collectionNo, { rarity: (s as { rarity?: number }).rarity }])),
+    ces: data ? new Set(data.ces.map((c) => c.collectionNo)) : undefined,
+  });
+
+  const chaldeaImport = (raw: unknown, accountIndex: number) => {
+    const r = parseChaldeaBackup(raw, region, { ...chaldeaOpts(), accountIndex });
+    setChaldeaPick(null);
+    setImportWarnings(r.warnings);
+    // servants and CEs are replaced; friends and mystic codes are kept
+    setPendingImport({ ...doc, servants: r.servants, ces: r.ces });
+  };
+
+  const onChaldeaFile = async (file: File | undefined) => {
+    if (!file) return;
+    setImportError(null);
+    try {
+      const raw: unknown = JSON.parse(await readChaldeaFile(file));
+      const { accounts } = parseChaldeaBackup(raw, region, chaldeaOpts());
+      if (accounts.length === 0) throw new Error('Il backup Chaldea non contiene account.');
+      if (accounts.length === 1) chaldeaImport(raw, 0);
+      else setChaldeaPick({ raw, accounts, index: Math.max(0, accounts.findIndex((a) => a.region === region.toLowerCase())) });
+    } catch (e) {
+      setImportError(e instanceof SyntaxError ? 'Non è un file JSON valido.' : e instanceof Error ? e.message : String(e));
+    } finally {
+      if (chaldeaInput.current) chaldeaInput.current.value = '';
     }
   };
 
@@ -152,6 +187,9 @@ export function RosterPage() {
           <button onClick={() => fileInput.current?.click()} className={btn}>Importa JSON</button>
           <input ref={fileInput} type="file" accept="application/json,.json" className="hidden"
             onChange={(e) => onFile(e.target.files?.[0])} />
+          <button onClick={() => chaldeaInput.current?.click()} className={btn}>Importa da Chaldea</button>
+          <input ref={chaldeaInput} type="file" accept="application/json,.json,.gz" className="hidden"
+            onChange={(e) => onChaldeaFile(e.target.files?.[0])} />
         </div>
       </div>
 
@@ -219,11 +257,40 @@ export function RosterPage() {
         {doc.servants.length} servant · {saving ? 'Salvataggio…' : 'Salvato'}
       </p>
 
+      {chaldeaPick && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true">
+          <div className="w-full max-w-sm rounded-lg border border-zinc-800 bg-zinc-900 p-5 shadow-xl">
+            <h2 className="mb-3 text-lg font-semibold">Scegli l'account Chaldea</h2>
+            <select
+              aria-label="Account" value={chaldeaPick.index}
+              onChange={(e) => setChaldeaPick({ ...chaldeaPick, index: Number(e.target.value) })}
+              className={`${input} mb-5`}
+            >
+              {chaldeaPick.accounts.map((a) => (
+                <option key={a.index} value={a.index}>{a.name}{a.region ? ` (${a.region.toUpperCase()})` : ''}</option>
+              ))}
+            </select>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setChaldeaPick(null)} className={btn}>Annulla</button>
+              <button
+                onClick={() => {
+                  try { chaldeaImport(chaldeaPick.raw, chaldeaPick.index); } catch (e) {
+                    setChaldeaPick(null);
+                    setImportError(e instanceof Error ? e.message : String(e));
+                  }
+                }}
+                className="rounded bg-sky-600 px-3 py-1.5 text-sm font-medium hover:bg-sky-500"
+              >Continua</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {pendingImport && (
         <ImportDialog
-          current={doc} next={pendingImport}
-          onCancel={() => setPendingImport(null)}
-          onConfirm={() => { update(pendingImport); flush(); setPendingImport(null); }}
+          current={doc} next={pendingImport} warnings={importWarnings}
+          onCancel={() => { setPendingImport(null); setImportWarnings([]); }}
+          onConfirm={() => { update(pendingImport); flush(); setPendingImport(null); setImportWarnings([]); }}
         />
       )}
     </section>
