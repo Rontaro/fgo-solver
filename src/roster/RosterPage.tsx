@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRegionData } from '../app/RegionData';
+import { FaceIcon } from '../app/ServantIcon';
+import { ServantSearch } from '../app/ServantSearch';
+import { queryWords, servantScore } from '../data/search';
 import type { CompactServant } from '../data/types';
 import { ImportDialog } from './ImportDialog';
 import { IdbRosterStore, RosterValidationError, exportJson, importJson } from './store';
@@ -49,7 +52,6 @@ export function RosterPage() {
   const { region, data } = useRegionData();
   const [doc, setDoc] = useState<RosterDoc | null>(null);
   const [filter, setFilter] = useState('');
-  const [search, setSearch] = useState('');
   const [pendingImport, setPendingImport] = useState<RosterDoc | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -88,25 +90,16 @@ export function RosterPage() {
   const servants = data?.servants;
   const owned = useMemo(() => new Set(doc?.servants.map((s) => s.collectionNo)), [doc]);
 
-  const results = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q || !servants) return [];
-    const out: CompactServant[] = [];
-    for (const s of servants.values()) {
-      if (owned.has(s.collectionNo) || !s.name.toLowerCase().includes(q)) continue;
-      out.push(s);
-      if (out.length >= MAX_RESULTS) break;
-    }
-    return out;
-  }, [search, servants, owned]);
+  const addable = useMemo(() => (servants ? [...servants.values()].filter((s) => !owned.has(s.collectionNo)) : []),
+    [servants, owned]);
 
   if (!doc) return <p className="text-zinc-400">Caricamento roster…</p>;
 
-  const q = filter.trim().toLowerCase();
+  const words = queryWords(filter);
   const rows = doc.servants.filter((o) => {
-    if (!q) return true;
+    if (!words.length) return true;
     const s = servants?.get(o.collectionNo);
-    return !!s && (s.name.toLowerCase().includes(q) || s.className.toLowerCase().includes(q));
+    return !!s && servantScore(s, words, s.className) !== null;
   });
 
   const setServant = (no: number, patch: Partial<OwnedServant>) =>
@@ -117,10 +110,7 @@ export function RosterPage() {
     setServant(o.collectionNo, { skillLv });
   };
   const remove = (no: number) => update({ ...doc, servants: doc.servants.filter((s) => s.collectionNo !== no) });
-  const add = (no: number) => {
-    update({ ...doc, servants: [...doc.servants, newServant(no)] });
-    setSearch('');
-  };
+  const add = (no: number) => update({ ...doc, servants: [...doc.servants, newServant(no)] });
 
   const doExport = () => {
     const blob = new Blob([exportJson(doc)], { type: 'application/json' });
@@ -151,24 +141,8 @@ export function RosterPage() {
   return (
     <section className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        <div className="relative w-full sm:w-72">
-          <input
-            value={search} onChange={(e) => setSearch(e.target.value)}
-            placeholder="Aggiungi servant (cerca per nome)…" className={input}
-          />
-          {results.length > 0 && (
-            <ul className="absolute z-10 mt-1 max-h-80 w-full overflow-auto rounded border border-zinc-800 bg-zinc-900 shadow-lg">
-              {results.map((s) => (
-                <li key={s.collectionNo}>
-                  <button onClick={() => add(s.collectionNo)} className="flex w-full justify-between gap-2 px-3 py-1.5 text-left text-sm hover:bg-zinc-800">
-                    <span>{s.name}</span>
-                    <span className="text-xs capitalize text-zinc-500">{s.className}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+        <ServantSearch items={addable} onPick={(s) => add(s.collectionNo)} limit={MAX_RESULTS}
+          placeholder="Aggiungi servant (nome o soprannome)…" className="w-full sm:w-72" />
         <input
           value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filtra roster…"
           className={`${input} sm:w-48`}
@@ -211,8 +185,13 @@ export function RosterPage() {
               return (
                 <tr key={no} className="border-b border-zinc-800/60 last:border-0">
                   <td className="px-3 py-1.5">
-                    {s ? s.name : <span className="text-zinc-500">Sconosciuto #{no}</span>}
-                    <UnsupportedBadge s={s} />
+                    <div className="flex items-center gap-2">
+                      <FaceIcon face={s?.face} name={s?.name ?? `#${no}`} />
+                      <span>
+                        {s ? s.name : <span className="text-zinc-500">Sconosciuto #{no}</span>}
+                        <UnsupportedBadge s={s} />
+                      </span>
+                    </div>
                   </td>
                   <td className="px-3 py-1.5 capitalize text-zinc-400">{s?.className ?? '—'}</td>
                   <td className="px-2 py-1.5"><NumberCell label="Livello" value={o.lv} min={1} max={120} onChange={(v) => setServant(no, { lv: v })} /></td>

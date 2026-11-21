@@ -1,6 +1,8 @@
 import { useMemo } from 'react';
 import type { CompactCE, CompactMC, CompactServant } from '../data/types';
 import type { OwnedServant } from '../roster/types';
+import { FaceIcon } from '../app/ServantIcon';
+import { ServantSearch } from '../app/ServantSearch';
 
 export type SlotKind = 'empty' | 'roster' | 'support' | 'free' | 'supportAuto';
 export interface SlotState { kind: SlotKind; collectionNo: number | null; ceName: string; ceLv: number; ceMlb: boolean }
@@ -18,7 +20,15 @@ interface Props {
 }
 
 export function TeamBuilder({ slots, setSlots, servants, ces, mcs, owned, mcId, setMcId, maxS, setMaxS }: Props) {
-  const ownedOk = useMemo(() => owned.filter((o) => servants.get(o.collectionNo)?.unsupported.length === 0), [owned, servants]);
+  const ownedBy = useMemo(() => new Map(owned.map((o) => [o.collectionNo, o])), [owned]);
+  const ownedOk = useMemo(() => owned.flatMap((o) => {
+    const v = servants.get(o.collectionNo);
+    return v && v.unsupported.length === 0 ? [v] : [];
+  }), [owned, servants]);
+  const ownedSub = (v: CompactServant) => {
+    const o = ownedBy.get(v.collectionNo);
+    return o ? `lv ${o.lv} · NP${o.npLv} · ${o.skillLv.join('/')}` : v.className;
+  };
   const allOk = useMemo(() => [...servants.values()].filter((s) => s.unsupported.length === 0)
     .sort((a, b) => a.name.localeCompare(b.name)), [servants]);
   const ceNames = useMemo(() => [...new Set(ces.filter((c) => c.unsupported.length === 0).map((c) => c.name))].sort(), [ces]);
@@ -37,13 +47,25 @@ export function TeamBuilder({ slots, setSlots, servants, ces, mcs, owned, mcId, 
             </select>
             {(s.kind === 'roster' || s.kind === 'support') && (
               <>
-                <select className={`${inp} w-full`} value={s.collectionNo ?? ''} onChange={(e) => update(i, { collectionNo: Number(e.target.value) || null })}>
-                  <option value="">— Servant —</option>
-                  {s.kind === 'roster'
-                    ? ownedOk.map((o) => <option key={o.collectionNo} value={o.collectionNo}>
-                        {servants.get(o.collectionNo)!.name} (lv {o.lv}, NP{o.npLv}, {o.skillLv.join('/')})</option>)
-                    : allOk.map((v) => <option key={v.collectionNo} value={v.collectionNo}>{v.name}</option>)}
-                </select>
+                {s.collectionNo !== null && servants.get(s.collectionNo) ? (() => {
+                  const v = servants.get(s.collectionNo)!;
+                  return (
+                    <div className="flex items-center gap-2">
+                      <FaceIcon face={v.face} name={v.name} />
+                      <span className="min-w-0 flex-1 text-sm">
+                        <span className="block truncate">{v.name}</span>
+                        <span className="block truncate text-xs text-zinc-500">{s.kind === 'roster' ? ownedSub(v) : 'lv 90 · NP1 · 10/10/10'}</span>
+                      </span>
+                      <button onClick={() => update(i, { collectionNo: null })} aria-label={`Cambia servant (${v.name})`}
+                        className="rounded px-2 py-0.5 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100">×</button>
+                    </div>
+                  );
+                })() : (
+                  <ServantSearch items={s.kind === 'roster' ? ownedOk : allOk} limit={30}
+                    placeholder={s.kind === 'roster' ? 'Cerca nel roster…' : 'Cerca servant…'}
+                    sub={s.kind === 'roster' ? ownedSub : undefined}
+                    onPick={(v) => update(i, { collectionNo: v.collectionNo })} />
+                )}
                 <input className={`${inp} w-full`} list="ce-names" placeholder="CE (opzionale)" value={s.ceName}
                   onChange={(e) => update(i, { ceName: e.target.value })} />
                 <div className="flex items-center gap-3 text-sm">
