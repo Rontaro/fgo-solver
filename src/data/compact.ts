@@ -4,77 +4,172 @@ import type {
 } from './types';
 
 // Raw Atlas Academy input is untyped JSON: `any` on the input side only.
+//
+// Safety principle: ignoring an effect that can only help is safe (a combo may
+// be missed, never reported wrongly). Anything that could hurt, or that we do
+// not recognise, marks the entity unsupported.
 
 const CARD_BY_ID: Record<string, Card> = { '1': 'arts', '2': 'buster', '3': 'quick' };
 const CARD_BY_TRAIT: Record<number, Card> = { 4001: 'arts', 4002: 'buster', 4003: 'quick' };
+const ALL_CARDS: Card[] = ['arts', 'buster', 'quick'];
 
+type Side = 'ally' | 'enemy';
+const SIDE: Record<string, Side> = {
+  self: 'ally', ptOne: 'ally', ptAll: 'ally', ptOther: 'ally', ptFull: 'ally', ptselectOneSub: 'ally',
+  enemy: 'enemy', enemyAll: 'enemy',
+};
+const TARGET: Record<string, TargetKind> = {
+  self: 'self', ptOne: 'ptOne', ptAll: 'ptAll', ptOther: 'ptOther', ptFull: 'ptAll',
+  ptselectOneSub: 'orderChange',
+};
+
+// Buffs we model. Only on allies: on an enemy they are unsupported.
 const BUFF_KIND: Record<string, EffectKind> = {
   upAtk: 'atkUp', upCommandall: 'cardUp', upNpdamage: 'npDmgUp',
   upDamage: 'powerUp', upDropnp: 'npGainUp', upChagetd: 'ocUp',
 };
-
-// Effects that can only help, or that our model does not consider
-// (survival, stars, crits, enemy charge): ignoring them is safe.
-const IGNORED_BUFFS = new Set([
-  'invincible', 'avoidance', 'upDefence', 'upCriticaldamage', 'upCriticalpoint',
-  'upStarweight', 'upDropstar', 'upTolerance', 'upToleranceSubstate', 'regainNp',
-  'regainHp', 'regainStar', 'guts', 'gutsRatio', 'upHate', 'avoidState', 'upGrantstate',
-  'upGivegainHp', 'upGainHp', 'addMaxhp', 'upDamagedropnp', 'upCriticalrate', 'downDefence',
-  'subSelfdamage', 'reduceHp', 'donotAct', 'upResistInstantdeath', 'upNonresistInstantdeath',
-  // Turns face cards into another type (Altria's Dragon's Core). Face cards are
-  // out of the 3T model (NP-only waves), and the NP card itself is unchanged.
-  'changeCommandCardType',
-  // Damage-avoidance variant of invincible (Castoria NP): survival only.
-  'specialInvincible',
-]);
-const IGNORED_FUNCS = new Set([
-  // hastenNpturn ("Charge Gain") on ptAll/self has funcTargetTeam "enemy" in the
-  // fixtures: it only fills enemy charge bars and never touches an ally NP gauge.
-  'gainStar', 'gainHp', 'gainHpPer', 'subState', 'hastenNpturn', 'delayNpturn',
-  'lossNp', 'none', 'instantDeath', 'gainHpFromTargets', 'absorbNpturn',
-]);
-
-const TARGET: Record<string, TargetKind> = {
-  self: 'self', ptOne: 'ptOne', ptAll: 'ptAll', ptOther: 'ptOther', ptFull: 'ptAll',
-  enemy: 'enemy', enemyAll: 'enemyAll', ptselectOneSub: 'orderChange',
+// Functions we model. Only on allies.
+const FUNC_KIND: Record<string, EffectKind> = {
+  gainNp: 'gainNp', shortenSkill: 'shortenSkill', replaceMember: 'orderChange',
 };
 
-function levels(svals: any[]): LevelVal[] {
-  return svals.map((v) => ({ value: v.Value ?? 0, turns: v.Turn ?? -1, count: v.Count ?? -1 }));
+// On allies: survival, stars, crits, defence, taunt, debuff resist, face cards.
+// Enemies are not simulated as attackers and face cards/crits are out of the
+// 3T model, so these never change the outcome; none of them lowers our damage
+// or NP gauge.
+const IGNORED_BUFFS_ALLY = new Set([
+  'invincible', 'specialInvincible', 'avoidance', 'upDefence', 'upDefencecommandall',
+  'upCriticaldamage', 'upCriticalpoint', 'upCriticalrate', 'upStarweight', 'upDropstar',
+  'upTolerance', 'upToleranceSubstate', 'regainNp', 'regainHp', 'regainStar', 'guts', 'gutsRatio',
+  'upHate', 'avoidState', 'upGrantstate', 'upGivegainHp', 'upGainHp', 'addMaxhp', 'upDamagedropnp',
+  'upResistInstantdeath', 'upNonresistInstantdeath',
+  // Turns face cards into another type (Altria's Dragon's Core): face cards are
+  // out of the model and the NP card itself is unchanged.
+  'changeCommandCardType',
+]);
+// On enemies: only effects that help us (weaker / stunned / slower enemies).
+// Ignoring them under-estimates our damage, which is the prudent direction.
+const IGNORED_BUFFS_ENEMY = new Set([
+  'downDefence', 'downDefencecommandall', 'donotAct', 'downAtk', 'downCriticalrate',
+  'downCriticalpoint', 'downTolerance', 'downNpdamage',
+]);
+const IGNORED_FUNCS_ALLY = new Set([
+  'gainStar', 'gainHp', 'gainHpPer', 'none',
+  // hastenNpturn on an ally with team player/playerAndEnemy (team=enemy variants
+  // are skipped earlier, they only run when an enemy casts the skill). Its only
+  // possible effect is to raise a charge/gauge, never to lower it: helpful only.
+  'hastenNpturn',
+  // Bond/drop/event-point bonuses: no battle effect.
+  'servantFriendshipUp', 'eventDropUp', 'eventPointUp', 'eventDropRateUp', 'eventPointRateUp',
+  'expUp', 'qpUp', 'qpDropUp', 'userEquipExpUp',
+]);
+const IGNORED_FUNCS_ENEMY = new Set([
+  'hastenNpturn', 'delayNpturn', 'absorbNpturn', 'instantDeath', 'gainHpFromTargets', 'subState', 'none',
+]);
+// subState on an ally is safe only when it removes debuffs and nothing else.
+const NEGATIVE_BUFF_TRAIT = 3005; // buffNegativeEffect
+
+// Conditions we understand. Anything else on a modelled effect -> unsupported.
+const SVAL_KEYS = new Set(['Rate', 'Turn', 'Count', 'Value', 'ShowState', 'Correction', 'Target']);
+// ProgressSelfTurn: the buff's turns tick on its holder's turn (standard for
+// player-side buffs, matches how we count turns).
+const BUFF_SCRIPT_KEYS = new Set(['ProgressSelfTurn']);
+const OC_SVALS = ['svals2', 'svals3', 'svals4', 'svals5'];
+
+type Class = { cls: 'apply'; kind: EffectKind } | { cls: 'ignore' } | { cls: 'unsupported'; reason: string };
+
+function classify(f: any): Class {
+  const side = SIDE[f.funcTargetType];
+  if (!side) return { cls: 'unsupported', reason: 'target:' + f.funcTargetType };
+  const at = side === 'enemy' ? '@enemy' : '';
+  if (f.funcType === 'addState' || f.funcType === 'addStateShort') {
+    const t: string | undefined = f.buffs?.[0]?.type;
+    if (!t) return { cls: 'unsupported', reason: 'buff:none' };
+    if (side === 'ally' && BUFF_KIND[t]) return { cls: 'apply', kind: BUFF_KIND[t] };
+    if ((side === 'ally' ? IGNORED_BUFFS_ALLY : IGNORED_BUFFS_ENEMY).has(t)) return { cls: 'ignore' };
+    return { cls: 'unsupported', reason: 'buff:' + t + at };
+  }
+  if (side === 'ally' && FUNC_KIND[f.funcType]) return { cls: 'apply', kind: FUNC_KIND[f.funcType] };
+  if (side === 'ally' && f.funcType === 'subState') {
+    const tv: number[] = (f.traitVals ?? []).map((t: any) => t.id);
+    if (tv.length && tv.every((id) => id === NEGATIVE_BUFF_TRAIT)) return { cls: 'ignore' };
+  }
+  if ((side === 'ally' ? IGNORED_FUNCS_ALLY : IGNORED_FUNCS_ENEMY).has(f.funcType)) return { cls: 'ignore' };
+  return { cls: 'unsupported', reason: 'func:' + f.funcType + at };
 }
 
-export function convertFunctions(funcs: any[], unsupported: string[]): Effect[] {
+// True when the function carries no condition beyond the ones we model.
+function plain(f: any): boolean {
+  if (f.functvals?.length || f.funcquestTvals?.length || f.overWriteTvalsList?.length) return false;
+  if (f.script && Object.keys(f.script).length) return false;
+  for (const k of ['svals', ...OC_SVALS]) {
+    for (const v of f[k] ?? []) if (Object.keys(v).some((key) => !SVAL_KEYS.has(key))) return false;
+  }
+  const script = f.buffs?.[0]?.script ?? {};
+  return Object.keys(script).every((k) => BUFF_SCRIPT_KEYS.has(k));
+}
+
+function levels(svals: any[], ok: boolean[]): LevelVal[] {
+  return svals.map((v, i) => ({ value: ok[i] ? v.Value ?? 0 : 0, turns: v.Turn ?? -1, count: v.Count ?? -1 }));
+}
+
+interface ConvOpts {
+  npDamage?: any;   // the NP's main damage function: skipped, splits pre/post extras
+  checkOc?: boolean; // NP extras: OC-dependent values are not modelled yet
+}
+
+/*
+ * Rate rules (applied after classification, so ignored effects are never
+ * looked at and unsupported ones are reported whatever their Rate):
+ * - Rate >= 1000: guaranteed (MCs use 5000).
+ * - 0 <= Rate < 1000: chance-based, treated as absent: a modelled (helpful)
+ *   effect gets value 0 at that level; if no level is guaranteed it is dropped.
+ * - Rate < 0: dependent follow-up, runs only if the previous function in the
+ *   same list succeeded. Kept only when |Rate| >= 1000 and the previous function
+ *   was applied unconditionally (ally target, no extra conditions, guaranteed
+ *   at every level). Otherwise treated like a failed chance (value 0).
+ * Rate is evaluated per level, since it can vary across levels.
+ */
+export function convertFunctions(funcs: any[], unsupported: string[], opts: ConvOpts = {}): Effect[] {
   const out: Effect[] = [];
+  let prevOk = false;
+  let afterDamage = false;
   for (const f of funcs) {
-    // Rate < 1000 = chance-based: treated as absent. MCs use 5000 (guaranteed).
-    const rate = f.svals?.[0]?.Rate ?? 1000;
-    if (rate < 1000) continue;
-    const target = TARGET[f.funcTargetType];
+    if (opts.npDamage && f === opts.npDamage) { prevOk = true; afterDamage = true; continue; }
+    // team=enemy: only runs when an enemy casts it. Never for our side.
+    if (f.funcTargetTeam === 'enemy') { prevOk = false; continue; }
+    const svals: any[] = f.svals ?? [];
+    const isPlain = plain(f);
+    const lvOk = svals.map((v) => {
+      const r = v.Rate ?? 1000;
+      return r >= 1000 || (r <= -1000 && prevOk);
+    });
+    prevOk = SIDE[f.funcTargetType] === 'ally' && isPlain && lvOk.length > 0 && lvOk.every(Boolean);
+
+    const c = classify(f);
+    if (c.cls === 'ignore') continue;
+    if (c.cls === 'unsupported') { unsupported.push(c.reason); continue; }
+    if (!isPlain) { unsupported.push('cond:' + f.funcType); continue; }
+    if (opts.checkOc && OC_SVALS.some((k) => f[k] && JSON.stringify(f[k]) !== JSON.stringify(f.svals))) {
+      unsupported.push('np:ocExtra:' + f.funcType); continue;
+    }
+    if (!lvOk.some(Boolean)) continue;
+
+    const e: Effect = { kind: c.kind, target: TARGET[f.funcTargetType], lv: levels(svals, lvOk) };
     if (f.funcType === 'addState' || f.funcType === 'addStateShort') {
       const b = f.buffs[0];
-      const kind = BUFF_KIND[b.type];
-      if (!kind) { if (!IGNORED_BUFFS.has(b.type)) unsupported.push('buff:' + b.type); continue; }
-      if (!target) { unsupported.push('target:' + f.funcTargetType); continue; }
-      const e: Effect = { kind, target, lv: levels(f.svals) };
       const self: number[] = (b.ckSelfIndv ?? []).map((t: any) => t.id);
       const op: number[] = (b.ckOpIndv ?? []).map((t: any) => t.id);
-      if (kind === 'cardUp') {
+      if (c.kind === 'cardUp') {
         // Empty ckSelfIndv = unconditioned: applies to every card, NP card included.
-        const cards = self.length ? self.map((id) => CARD_BY_TRAIT[id]).filter(Boolean)
-          : (['arts', 'buster', 'quick'] as Card[]);
+        const cards = self.length ? self.map((id) => CARD_BY_TRAIT[id]).filter(Boolean) : ALL_CARDS;
         if (cards.length !== self.length && self.length) { unsupported.push('ckSelfIndv:' + b.type); continue; }
         e.cards = cards;
       } else if (self.length) { unsupported.push('ckSelfIndv:' + b.type); continue; }
       if (op.length) e.opTraits = op;
-      out.push(e);
-    } else if (f.funcType === 'gainNp' || f.funcType === 'shortenSkill' || f.funcType === 'replaceMember') {
-      if (!target) { unsupported.push('target:' + f.funcTargetType); continue; }
-      const kind: EffectKind = f.funcType === 'gainNp' ? 'gainNp'
-        : f.funcType === 'shortenSkill' ? 'shortenSkill' : 'orderChange';
-      out.push({ kind, target, lv: levels(f.svals) });
-    } else if (!IGNORED_FUNCS.has(f.funcType) && !f.funcType.startsWith('damageNp')) {
-      unsupported.push('func:' + f.funcType);
     }
+    if (opts.npDamage && !afterDamage) e.pre = true;
+    out.push(e);
   }
   return out;
 }
@@ -87,25 +182,33 @@ function skillsOf(raw: any[], unsupported: string[]): Skill[] {
     .map((s) => ({ num: s.num, cooldown: s.coolDown, effects: convertFunctions(s.functions, unsupported) }));
 }
 
+const isDamage = (f: any) => f.funcType.startsWith('damageNp');
+
 function npOf(svt: any, unsupported: string[]): NoblePhantasm | null {
-  // Support NPs (no damage, e.g. Castoria) are not wave clearers: null.
-  const nps = svt.noblePhantasms.filter((n: any) => n.functions.some((f: any) => f.funcType.startsWith('damageNp')));
-  const np = nps.at(-1);
+  // Highest priority NP is the current one (last wins ties).
+  let np: any = null;
+  for (const n of svt.noblePhantasms) if (!np || n.priority >= np.priority) np = n;
   if (!np) return null;
-  const dmg = np.functions.find((f: any) => f.funcType.startsWith('damageNp'));
+  // Support NPs (no damage, e.g. Castoria) are not wave clearers: null.
+  const dmg = np.functions.find(isDamage);
+  if (!dmg) return null;
+  const card = CARD_BY_ID[String(np.card)];
+  if (!card) { unsupported.push('np:card:' + np.card); return null; }
   const se = dmg.funcType === 'damageNpIndividual';
   if (dmg.funcType !== 'damageNp' && !se) unsupported.push('np:' + dmg.funcType);
-  const ocs: any[][] = [dmg.svals, dmg.svals2, dmg.svals3, dmg.svals4, dmg.svals5];
-  const extraFuncs = np.functions.filter((f: any) => f !== dmg);
+  if (!plain(dmg)) unsupported.push('cond:' + dmg.funcType);
+  const ocs: any[][] = [dmg.svals, ...OC_SVALS.map((k) => dmg[k])];
+  if (ocs.some((oc) => oc.some((v) => (v.Rate ?? 1000) < 1000))) unsupported.push('np:rate');
   return {
-    card: CARD_BY_ID[String(np.card)],
+    card,
     aoe: dmg.funcTargetType === 'enemyAll',
     mult: ocs.map((oc) => oc.map((v) => v.Value)),
     seMult: se ? ocs.map((oc) => oc.map((v) => v.Correction)) : undefined,
     seTraits: se ? [dmg.svals[0].Target] : undefined,
     hits: np.npDistribution,
     npRate: np.npGain.np,
-    extra: convertFunctions(extraFuncs, unsupported),
+    // Any other damageNp* in the list is reported unsupported by convertFunctions.
+    extra: convertFunctions(np.functions, unsupported, { npDamage: dmg, checkOc: true }),
   };
 }
 

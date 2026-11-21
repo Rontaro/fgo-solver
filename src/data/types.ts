@@ -14,6 +14,7 @@ export interface Effect {
   lv: LevelVal[];          // index = skill level - 1 (or 0 for passives/CE)
   cards?: Card[];          // cardUp: which cards it applies to
   opTraits?: number[];     // powerUp/npDmgUp: only vs these traits
+  pre?: boolean;           // NP extra only: true = runs before the damage function
 }
 
 export interface Skill { num: 1 | 2 | 3; cooldown: number[]; effects: Effect[]; }

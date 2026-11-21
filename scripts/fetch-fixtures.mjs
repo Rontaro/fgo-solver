@@ -3,6 +3,7 @@ const BASE = 'https://api.atlasacademy.io';
 const files = {
   'castoria.json': '/nice/NA/servant/284?lore=false',
   'altria.json': '/nice/NA/servant/2?lore=false',
+  'siegfried.json': '/nice/NA/servant/6?lore=false', // damageNpIndividual (vs Dragon 2002)
   'kaleidoscope.json': '/nice/NA/equip/34',
   'mc-combat.json': '/nice/NA/MC/20',
   'quest-prison-ruins.json': '/nice/NA/quest/93030214/3',
