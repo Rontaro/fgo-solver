@@ -71,11 +71,6 @@ const IGNORED_BUFFS_ALLY = new Set([
   // Changes field traits: none of our modelled effects reads the field (field
   // conditions are reported as cond:*).
   'fieldIndividuality',
-  // NOT ignored, on purpose: *Function buffs (attackAfterFunction,
-  // commandattackAfterFunction, attackBefore..., selfturnend..., damage...,
-  // guts..., dead..., delay...) trigger another skill whose functions are not
-  // in the servant export (only its id in svals.Value). They stay unsupported
-  // until build-data resolves those skill ids and classifies them recursively.
 ]);
 // On enemies: only effects that help us (weaker / stunned / slower enemies).
 // Ignoring them under-estimates our damage, which is the prudent direction.
@@ -125,7 +120,11 @@ const IGNORED_FUNCS_ENEMY = new Set([
 // buffNegativeEffect, or the debuff-only DoT families poison/burn/curse.
 const DEBUFF_TRAITS = new Set([3005, 3011, 3015, 3026]);
 
-// Conditions we understand. Anything else on a modelled effect -> unsupported.
+// Conditions we understand. Anything else on a modelled effect: dropped if the
+// effect is helpful (we only lose a bonus), unsupported otherwise.
+// Helpful = any modelled kind on an ally except orderChange (it moves members
+// around, so it is not a pure bonus).
+const NOT_HELPFUL = new Set<EffectKind>(['orderChange']);
 const SVAL_KEYS = new Set([
   'Rate', 'Turn', 'Count', 'Value', 'ShowState', 'Correction', 'Target',
   // Display only: whether to show "MISS"/"NO EFFECT" popups (no game logic).
@@ -145,8 +144,78 @@ const OC_SVALS = ['svals2', 'svals3', 'svals4', 'svals5'];
 
 type Class = { cls: 'apply'; kind: EffectKind } | { cls: 'ignore' } | { cls: 'unsupported'; reason: string };
 
-function classify(f: any): Class {
-  const side = SIDE[f.funcTargetType];
+/** Raw Atlas skills (as returned by /nice/{region}/skill/{id}) by skill id. */
+export type TriggerLookup = Map<number, any>;
+
+// Trigger buffs that only fire when the holder is hit, evades, gets guts or
+// dies. Enemies do not act in our model, so on an ally they never fire: ignored
+// with no lookup needed. On an enemy holder (fires when WE hit it) they are
+// resolved like the ones below.
+const TRIGGER_ON_HIT = new Set([
+  'damageFunction', 'gutsFunction', 'deadFunction', 'counterFunction', 'reflectionFunction',
+  'avoidFunctionExecuteSelf',
+]);
+// Trigger buffs whose svals.Value is the id of the skill they run (level in
+// Value2). Resolved through the lookup and classified recursively.
+export const TRIGGER_BUFFS = new Set([
+  'attackBeforeFunction', 'attackAfterFunction', 'attackAfterFunctionMainOnly',
+  'commandattackBeforeFunction', 'commandattackBeforeFunctionMainOnly',
+  'commandattackAfterFunction', 'commandattackAfterFunctionMainOnly',
+  'selfturnstartFunction', 'selfturnendFunction', 'delayFunction', 'entryFunction',
+  'npattackPrevBuff', 'skillBeforeFunction', 'treasureDeviceBeforeFunction', 'confirmCommandFunction',
+  ...TRIGGER_ON_HIT,
+]);
+const TRIGGER_DEPTH = 2;
+
+/** Skill ids a trigger buff function points to (every level and OC variant). */
+export function triggerSkillIds(f: any): number[] {
+  const t = f.buffs?.[0]?.type;
+  if (!t || !TRIGGER_BUFFS.has(t)) return [];
+  const ids = new Set<number>();
+  for (const k of ['svals', ...OC_SVALS]) for (const v of f[k] ?? []) if (v.Value) ids.add(v.Value);
+  return [...ids];
+}
+
+interface Ctx { triggers?: TriggerLookup; depth: number; flip: boolean; }
+
+// Sides inside a triggered skill are relative to the buff holder: when the
+// holder is an enemy, its "self" is the enemy side and its "enemy" is us.
+function sideOf(f: any, ctx: Ctx): Side | undefined {
+  const s = SIDE[f.funcTargetType];
+  if (!s || !ctx.flip) return s;
+  return s === 'ally' ? 'enemy' : 'ally';
+}
+
+// A trigger buff is ignored when every function of every skill it can run is
+// helpful or ignored. The extra help is not modelled (conservative); modelling
+// attackAfter NP-gain triggers is a later improvement.
+function classifyTrigger(f: any, t: string, side: Side, ctx: Ctx): Class {
+  const at = side === 'enemy' ? '@enemy' : '';
+  if (side === 'ally' && TRIGGER_ON_HIT.has(t)) return { cls: 'ignore' };
+  if (!ctx.triggers) return { cls: 'unsupported', reason: 'buff:' + t + at };
+  const fail = (why: string): Class => ({ cls: 'unsupported', reason: 'trigger:' + t + at + ':' + why });
+  if (ctx.depth >= TRIGGER_DEPTH) return fail('depth');
+  const ids = triggerSkillIds(f);
+  if (!ids.length) return fail('noSkill');
+  const inner: Ctx = { triggers: ctx.triggers, depth: ctx.depth + 1, flip: side === 'enemy' };
+  for (const id of ids) {
+    const skill = ctx.triggers.get(id);
+    if (!skill) return fail('missing:' + id);
+    for (const g of skill.functions ?? []) {
+      // funcTargetTeam is about the caster (the holder): skip what does not run.
+      if (g.funcTargetTeam === (inner.flip ? 'player' : 'enemy')) continue;
+      // Extra damage on the opposing side: only more damage, not counted.
+      if (String(g.funcType).startsWith('damageNp') && sideOf(g, inner) === 'enemy') continue;
+      const c = classify(g, inner);
+      if (c.cls === 'unsupported') return fail(c.reason);
+      if (c.cls === 'apply' && NOT_HELPFUL.has(c.kind)) return fail(c.kind);
+    }
+  }
+  return { cls: 'ignore' };
+}
+
+function classify(f: any, ctx: Ctx = { depth: 0, flip: false }): Class {
+  const side = sideOf(f, ctx);
   if (!side) return { cls: 'unsupported', reason: 'target:' + f.funcTargetType };
   const at = side === 'enemy' ? '@enemy' : '';
   if (f.funcType === 'addState' || f.funcType === 'addStateShort') {
@@ -154,6 +223,7 @@ function classify(f: any): Class {
     if (!t) return { cls: 'unsupported', reason: 'buff:none' };
     if (side === 'ally' && BUFF_KIND[t]) return { cls: 'apply', kind: BUFF_KIND[t] };
     if ((side === 'ally' ? IGNORED_BUFFS_ALLY : IGNORED_BUFFS_ENEMY).has(t)) return { cls: 'ignore' };
+    if (TRIGGER_BUFFS.has(t)) return classifyTrigger(f, t, side, ctx);
     return { cls: 'unsupported', reason: 'buff:' + t + at };
   }
   if (side === 'ally' && FUNC_KIND[f.funcType]) return { cls: 'apply', kind: FUNC_KIND[f.funcType] };
@@ -193,6 +263,7 @@ interface ConvOpts {
   npDamage?: any;   // the NP's main damage function: skipped, splits pre/post extras
   npExtras?: boolean; // NP extras: fill Effect.oc when OC variants differ
   selfTraits?: Set<number>; // the servant's base traits (self functvals check)
+  triggers?: TriggerLookup; // skills run by trigger buffs; absent = triggers unsupported
 }
 
 /*
@@ -231,10 +302,12 @@ export function convertFunctions(funcs: any[], unsupported: string[], opts: Conv
     const lvOk = setOk[0];
     prevOk = SIDE[f.funcTargetType] === 'ally' && isPlain && lvOk.length > 0 && setOk.every((s) => s.every(Boolean));
 
-    const c = classify(f);
+    const c = classify(f, { triggers: opts.triggers, depth: 0, flip: false });
     if (c.cls === 'ignore') continue;
     if (c.cls === 'unsupported') { unsupported.push(c.reason); continue; }
-    if (!isPlain) { unsupported.push('cond:' + f.funcType); continue; }
+    // Helpful effect under a condition we cannot evaluate: dropped (we only lose
+    // a bonus). A non-helpful one is unsupported.
+    if (!isPlain) { if (NOT_HELPFUL.has(c.kind)) unsupported.push('cond:' + f.funcType); continue; }
     if (!setOk.some((s) => s.some(Boolean))) continue;
 
     // lv = OC1 values: code that ignores OC stays conservative for helpful effects.
@@ -249,9 +322,10 @@ export function convertFunctions(funcs: any[], unsupported: string[], opts: Conv
       if (c.kind === 'cardUp') {
         // Empty ckSelfIndv = unconditioned: applies to every card, NP card included.
         const cards = self.length ? self.map((id) => CARD_BY_TRAIT[id]).filter(Boolean) : ALL_CARDS;
-        if (cards.length !== self.length && self.length) { unsupported.push('ckSelfIndv:' + b.type); continue; }
+        // A non-card trait in ckSelfIndv is a holder condition: dropped (helpful).
+        if (cards.length !== self.length && self.length) continue;
         e.cards = cards;
-      } else if (self.length) { unsupported.push('ckSelfIndv:' + b.type); continue; }
+      } else if (self.length) continue; // holder-trait condition on a helpful buff: dropped
       if (op.length) e.opTraits = op;
     }
     if (opts.npDamage && !afterDamage) e.pre = true;
@@ -260,17 +334,17 @@ export function convertFunctions(funcs: any[], unsupported: string[], opts: Conv
   return out;
 }
 
-function skillsOf(raw: any[], unsupported: string[], selfTraits?: Set<number>): Skill[] {
+function skillsOf(raw: any[], unsupported: string[], base: ConvOpts): Skill[] {
   // Same num appears once per upgrade (rank-up/interlude): highest priority wins.
   const byNum = new Map<number, any>();
   for (const s of raw) if (!byNum.has(s.num) || s.priority > byNum.get(s.num).priority) byNum.set(s.num, s);
   return [...byNum.values()].sort((a, b) => a.num - b.num)
-    .map((s) => ({ num: s.num, cooldown: s.coolDown, effects: convertFunctions(s.functions, unsupported, { selfTraits }) }));
+    .map((s) => ({ num: s.num, cooldown: s.coolDown, effects: convertFunctions(s.functions, unsupported, base) }));
 }
 
 const isDamage = (f: any) => f.funcType.startsWith('damageNp');
 
-function npOf(svt: any, unsupported: string[], selfTraits?: Set<number>): NoblePhantasm | null {
+function npOf(svt: any, unsupported: string[], base: ConvOpts): NoblePhantasm | null {
   // Highest priority NP is the current one (last wins ties).
   let np: any = null;
   for (const n of svt.noblePhantasms) if (!np || n.priority >= np.priority) np = n;
@@ -297,14 +371,17 @@ function npOf(svt: any, unsupported: string[], selfTraits?: Set<number>): NobleP
     hits: np.npDistribution,
     npRate: np.npGain.np,
     // Any other damageNp* in the list is reported unsupported by convertFunctions.
-    extra: convertFunctions(np.functions, unsupported, { npDamage: dmg, npExtras: true, selfTraits }),
+    extra: convertFunctions(np.functions, unsupported, { ...base, npDamage: dmg, npExtras: true }),
   };
 }
 
-export function compactServant(svt: any): CompactServant {
+/** `triggers`: skills run by trigger buffs (built by scripts/build-data.mjs).
+ *  Without it, trigger buffs other than the on-hit ones are unsupported. */
+export function compactServant(svt: any, triggers?: TriggerLookup): CompactServant {
   const unsupported: string[] = [];
   // appendPassive num 100..104 = append 1..5; append 2 (num 101) is "Load Magical Energy".
   const selfTraits = new Set<number>(svt.traits.map((t: any) => t.id));
+  const base: ConvOpts = { selfTraits, triggers };
   // A form change (e.g. Mélusine, Ptolemaios) swaps skills and NP: the highest
   // priority skill/NP picked below may only exist after it. Checked on every
   // skill and NP variant, not only the chosen ones.
@@ -317,19 +394,19 @@ export function compactServant(svt: any): CompactServant {
     id: svt.id, collectionNo: svt.collectionNo, name: svt.name,
     className: svt.className, attribute: svt.attribute, traits: svt.traits.map((t: any) => t.id),
     atkGrowth: svt.atkGrowth,
-    skills: skillsOf(svt.skills, unsupported, selfTraits),
-    passives: svt.classPassive.flatMap((p: any) => convertFunctions(p.functions, unsupported, { selfTraits })),
+    skills: skillsOf(svt.skills, unsupported, base),
+    passives: svt.classPassive.flatMap((p: any) => convertFunctions(p.functions, unsupported, base)),
     append2: append2 ? append2.functions[0].svals.map((v: any) => v.Value) : [],
-    np: npOf(svt, unsupported, selfTraits),
+    np: npOf(svt, unsupported, base),
     unsupported: [...new Set(unsupported)],
   };
 }
 
-export function compactCE(ce: any): CompactCE {
+export function compactCE(ce: any, triggers?: TriggerLookup): CompactCE {
   const unsupported: string[] = [];
   const base = ce.skills.filter((s: any) => (s.condLimitCount ?? 0) === 0);
   const mlb = ce.skills.filter((s: any) => s.condLimitCount === 4);
-  const conv = (ss: any[]) => ss.flatMap((s) => convertFunctions(s.functions, unsupported));
+  const conv = (ss: any[]) => ss.flatMap((s) => convertFunctions(s.functions, unsupported, { triggers }));
   return {
     id: ce.id, collectionNo: ce.collectionNo, name: ce.name, atkGrowth: ce.atkGrowth,
     effects: conv(base), effectsMlb: mlb.length ? conv(mlb) : conv(base),
@@ -337,11 +414,11 @@ export function compactCE(ce: any): CompactCE {
   };
 }
 
-export function compactMC(mc: any): CompactMC {
+export function compactMC(mc: any, triggers?: TriggerLookup): CompactMC {
   const unsupported: string[] = [];
   // MC skills all have num 0 in Atlas: order in the array is the in-game order.
   const skills: Skill[] = mc.skills.map((s: any, i: number) => ({
-    num: (i + 1) as Skill['num'], cooldown: s.coolDown, effects: convertFunctions(s.functions, unsupported),
+    num: (i + 1) as Skill['num'], cooldown: s.coolDown, effects: convertFunctions(s.functions, unsupported, { triggers }),
   }));
   return { id: mc.id, name: mc.name, skills, unsupported: [...new Set(unsupported)] };
 }

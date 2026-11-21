@@ -64,6 +64,7 @@ describe('compactServant', () => {
 });
 
 describe('convertFunctions', () => {
+  const DROPPED = { out: [], unsupported: [] };
   const cardUpFn = (ckSelfIndv: { id: number }[]) => ({
     funcType: 'addStateShort', funcTargetType: 'self',
     buffs: [{ type: 'upCommandall', ckSelfIndv, ckOpIndv: [] }],
@@ -75,10 +76,10 @@ describe('convertFunctions', () => {
     expect(e).toMatchObject({ kind: 'cardUp', target: 'self', cards: ['arts', 'buster', 'quick'] });
     expect(unsupported).toEqual([]);
   });
-  it('upCommandall conditioned on a non-card trait is unsupported', () => {
+  it('upCommandall conditioned on a non-card trait is dropped (helpful, condition unknown)', () => {
     const unsupported: string[] = [];
     expect(convertFunctions([cardUpFn([{ id: 4001 }, { id: 9999 }])], unsupported)).toEqual([]);
-    expect(unsupported).toEqual(['ckSelfIndv:upCommandall']);
+    expect(unsupported).toEqual([]);
   });
 
   const buff = (type: string, target = 'self', sv: Record<string, number> = {}, extra: any = {}) => ({
@@ -130,11 +131,52 @@ describe('convertFunctions', () => {
     expect(run([buff('upFuncHpReduce', 'self')]).unsupported).toEqual(['buff:upFuncHpReduce']);
     expect(run([buff('downTolerance', 'enemy')])).toEqual({ out: [], unsupported: [] });
   });
-  it('skill-triggering buffs stay unsupported (triggered skill not in the export)', () => {
-    for (const t of ['attackAfterFunction', 'commandattackAfterFunction', 'selfturnendFunction', 'damageFunction',
-      'gutsFunction', 'deadFunction', 'delayFunction']) {
-      expect(run([buff(t, 'self')]).unsupported).toEqual(['buff:' + t]);
+  it('without a lookup, skill-triggering buffs stay unsupported (old behaviour)', () => {
+    for (const t of ['attackAfterFunction', 'commandattackAfterFunction', 'selfturnendFunction', 'delayFunction']) {
+      expect(run([buff(t, 'self', { Value: 900001 })]).unsupported).toEqual(['buff:' + t]);
     }
+  });
+  it('on-hit triggers (damage, guts, death) never fire on allies: ignored, no lookup needed', () => {
+    for (const t of ['damageFunction', 'gutsFunction', 'deadFunction']) ignored(buff(t, 'self', { Value: 900001 }));
+    // On an enemy holder they fire when we hit it: still need the lookup.
+    expect(run([buff('damageFunction', 'enemy', { Value: 900001 })]).unsupported).toEqual(['buff:damageFunction@enemy']);
+  });
+  describe('with a trigger lookup', () => {
+    const skill = (id: number, functions: any[]) => [id, { id, functions }] as [number, any];
+    const lookup = new Map<number, any>([
+      skill(1, [func('gainNp', 'self'), buff('upAtk', 'self'), func('gainStar', 'self')]), // helpful
+      skill(2, [func('lossNp', 'self')]),                                                   // harmful
+      skill(3, [buff('downDefence', 'enemy'), func('damageNp', 'enemy')]),                  // helps us
+      skill(4, [buff('attackAfterFunction', 'self', { Value: 1 })]),                         // nested, helpful
+      skill(5, [buff('attackAfterFunction', 'self', { Value: 4 })]),                         // too deep
+      skill(6, [func('replaceMember', 'ptselectOneSub')]),                                   // not helpful
+      skill(7, [func('lossNp', 'self'), func('gainNp', 'self', {}, { funcTargetTeam: 'enemy' })]),
+      skill(8, [func('lossNp', 'enemy')]),          // held by an enemy: "enemy" = our side
+    ]);
+    const trig = (t: string, id: number, target = 'self') => run([buff(t, target, { Value: id })], { triggers: lookup });
+    it('a helpful (or only-helps-us) triggered skill: the trigger is ignored', () => {
+      expect(trig('attackAfterFunction', 1)).toEqual({ out: [], unsupported: [] });
+      expect(trig('commandattackAfterFunction', 3)).toEqual({ out: [], unsupported: [] });
+      expect(trig('selfturnendFunction', 4)).toEqual({ out: [], unsupported: [] });
+    });
+    it('a harmful, missing, too deep or non-helpful triggered skill: unsupported', () => {
+      expect(trig('attackAfterFunction', 2).unsupported).toEqual(['trigger:attackAfterFunction:func:lossNp']);
+      expect(trig('attackAfterFunction', 99).unsupported).toEqual(['trigger:attackAfterFunction:missing:99']);
+      expect(trig('attackAfterFunction', 5).unsupported)
+        .toEqual(['trigger:attackAfterFunction:trigger:attackAfterFunction:trigger:attackAfterFunction:depth']);
+      expect(trig('attackAfterFunction', 6).unsupported).toEqual(['trigger:attackAfterFunction:orderChange']);
+      expect(trig('delayFunction', 7).unsupported).toEqual(['trigger:delayFunction:func:lossNp']);
+    });
+    it('on an enemy holder, sides inside the triggered skill are flipped', () => {
+      // lossNp "on enemy" from an enemy-held buff hits our side: harmful.
+      expect(trig('selfturnendFunction', 8, 'enemy').unsupported)
+        .toEqual(['trigger:selfturnendFunction@enemy:func:lossNp']);
+      // ...while a self-buff of the enemy (upAtk on itself) is an enemy buff: unsupported too.
+      expect(trig('selfturnendFunction', 1, 'enemy').unsupported[0]).toMatch(/^trigger:selfturnendFunction@enemy:/);
+    });
+  });
+  it('a non-helpful kind (orderChange) with an unknown condition stays unsupported', () => {
+    expect(run([func('replaceMember', 'ptselectOneSub', { EventId: 1 })]).unsupported).toEqual(['cond:replaceMember']);
   });
   it('subState removing only debuff families (poison/burn/curse) is ignored', () => {
     ignored(func('subState', 'ptAll', {}, { traitVals: [{ id: 3011 }, { id: 3026 }, { id: 3015 }] }));
@@ -145,7 +187,7 @@ describe('convertFunctions', () => {
   });
   it('display-only sval keys are accepted', () => {
     expect(run([buff('upAtk', 'self', { ShowQuestNoEffect: 1, HideMiss: 1, HideNoEffect: 1 })]).out).toHaveLength(1);
-    expect(run([buff('upAtk', 'self', { DisplayLastFuncInvalidType: 1 })]).unsupported).toEqual(['cond:addStateShort']);
+    expect(run([buff('upAtk', 'self', { DisplayLastFuncInvalidType: 1 })])).toEqual(DROPPED);
   });
   it('random or player-chosen options (ActSet, ActSelectIndex) are not guaranteed', () => {
     expect(run([buff('upAtk', 'self', { ActSet: 1, ActSetWeight: 20 })])).toEqual({ out: [], unsupported: [] });
@@ -161,15 +203,15 @@ describe('convertFunctions', () => {
     const two = buff('upDamage');
     two.buffs[0].script = { checkIndvType: 1 } as any;
     two.buffs[0].ckOpIndv = [{ id: 1 }, { id: 2 }] as any;
-    expect(run([two]).unsupported).toEqual(['cond:addStateShort']);
+    expect(run([two])).toEqual(DROPPED);
   });
   it('self functvals are accepted only when the servant always has the traits', () => {
     const f = buff('upAtk', 'self', {}, { functvals: [{ id: 300 }] });
     const traits = new Set([300, 1000]);
     expect(run([f], { selfTraits: traits }).out).toHaveLength(1);
-    expect(run([f], { selfTraits: new Set([301]) }).unsupported).toEqual(['cond:addStateShort']);
+    expect(run([f], { selfTraits: new Set([301]) })).toEqual(DROPPED);
     const ally = buff('upAtk', 'ptOther', {}, { functvals: [{ id: 300 }] });
-    expect(run([ally], { selfTraits: traits }).unsupported).toEqual(['cond:addStateShort']);
+    expect(run([ally], { selfTraits: traits })).toEqual(DROPPED);
   });
   it('addDamage on an ally is modelled as dmgPlus, with its trait condition', () => {
     const f = buff('addDamage', 'ptAll', { Value: 500 });
@@ -205,12 +247,12 @@ describe('convertFunctions', () => {
     // |Rate| < 1000 follow-up after a guaranteed function: still a chance, dropped.
     expect(run([buff('upAtk'), func('gainNp', 'self', { Rate: -500 })]).out.map((e) => e.kind)).toEqual(['atkUp']);
   });
-  it('extra conditions on a modelled effect are unsupported', () => {
-    expect(run([buff('upAtk', 'self', {}, { functvals: [{ id: 1 }] })]).unsupported).toEqual(['cond:addStateShort']);
-    expect(run([buff('upAtk', 'self', { EventId: 80001 })]).unsupported).toEqual(['cond:addStateShort']);
+  it('extra conditions on a helpful modelled effect: dropped', () => {
+    expect(run([buff('upAtk', 'self', {}, { functvals: [{ id: 1 }] })])).toEqual(DROPPED);
+    expect(run([buff('upAtk', 'self', { EventId: 80001 })])).toEqual(DROPPED);
     const scripted = buff('upAtk');
     scripted.buffs[0].script = { INDIVIDUALITIE: 1 } as any;
-    expect(run([scripted]).unsupported).toEqual(['cond:addStateShort']);
+    expect(run([scripted])).toEqual(DROPPED);
     const ok = buff('upAtk');
     ok.buffs[0].script = { ProgressSelfTurn: 1 } as any;
     expect(run([ok]).unsupported).toEqual([]);
@@ -237,7 +279,7 @@ describe('convertFunctions', () => {
     const condOc = func('gainNp', 'self', {}, {
       svals2: [{ Rate: 1000, Value: 2000, EventId: 1 }], svals3: sv(3000), svals4: sv(4000), svals5: sv(5000),
     });
-    expect(run([dmg, condOc], { npDamage: dmg, npExtras: true }).unsupported).toEqual(['cond:gainNp']);
+    expect(run([dmg, condOc], { npDamage: dmg, npExtras: true })).toEqual(DROPPED);
     // Equal OC variants: no oc field.
     const flat = func('gainNp', 'self', {}, { svals2: sv(1000), svals3: sv(1000), svals4: sv(1000), svals5: sv(1000) });
     expect(run([dmg, flat], { npDamage: dmg, npExtras: true }).out[0].oc).toBeUndefined();
