@@ -20,12 +20,17 @@ export function npGainPerHit(i: NpGainInput & { overkill: boolean }): number {
   );
 }
 
-/** Split total damage by hit distribution (percentages); the remainder goes on the last hit. */
-export function splitHits(total: number, hits: number[]): number[] {
-  const parts = hits.map(h => Math.floor(total * h / 100));
+/**
+ * Split total damage by hit distribution. Each hit but the last is
+ * floor(total * h / sum(hits)); the last takes the remainder. Same rule as
+ * Chaldea's Laplace (lib/app/battle/functions/damage.dart, hit loop).
+ */
+export function splitHits(total: number, hits: readonly number[]): number[] {
+  const sumHits = hits.reduce((a, b) => a + b, 0);
+  const parts = hits.map(h => Math.floor(total * h / sumHits));
   if (parts.length > 0) {
-    const sum = parts.reduce((a, b) => a + b, 0);
-    parts[parts.length - 1] += total - sum;
+    const sum = parts.slice(0, -1).reduce((a, b) => a + b, 0);
+    parts[parts.length - 1] = total - sum;
   }
   return parts;
 }
@@ -33,17 +38,17 @@ export function splitHits(total: number, hits: number[]): number[] {
 export interface Hit { damage: number; overkill: boolean; }
 
 /**
- * Apply hits in order to an enemy.
- * TODO: verify the overkill rule against Chaldea's Laplace in golden tests. Current rule: a hit
- * is overkill if HP before the hit is already <= 0, or the hit takes HP strictly below 0
- * (so a hit landing exactly on 0 is NOT overkill, but the next one is).
+ * Apply hits in order to an enemy. A hit is overkill when the enemy HP after
+ * that hit is strictly below 0, as in Chaldea's Laplace
+ * (lib/app/battle/functions/damage.dart: `isOverkill = target.hp < 0`, checked
+ * after `receiveDamage`; HP may go negative). So the killing hit is overkill
+ * unless it lands exactly on 0, and later hits are overkill once HP is below 0.
  */
-export function hitsOnEnemy(enemyHp: number, hitDamages: number[]): { hits: Hit[]; hpLeft: number } {
+export function hitsOnEnemy(enemyHp: number, hitDamages: readonly number[]): { hits: Hit[]; hpLeft: number } {
   let hp = enemyHp;
   const hits = hitDamages.map(damage => {
-    const overkill = hp <= 0 || hp - damage < 0;
     hp -= damage;
-    return { damage, overkill };
+    return { damage, overkill: hp < 0 };
   });
   return { hits, hpLeft: hp };
 }

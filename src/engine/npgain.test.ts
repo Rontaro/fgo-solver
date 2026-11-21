@@ -37,6 +37,9 @@ describe('splitHits', () => {
     const odd = splitHits(1001, [33, 33, 34]);
     expect(odd).toEqual([330, 330, 341]);
   });
+  it('divides by the sum of the distribution, not by 100 (Chaldea)', () => {
+    expect(splitHits(1000, [1, 1, 2])).toEqual([250, 250, 500]);
+  });
 });
 
 describe('hitsOnEnemy', () => {
@@ -49,6 +52,10 @@ describe('hitsOnEnemy', () => {
     const r = hitsOnEnemy(1000, [1000, 500]);
     expect(r.hits.map(h => h.overkill)).toEqual([false, true]);
     expect(r.hpLeft).toBe(-500);
+  });
+  it('overkill = HP after the hit < 0 (Chaldea): a 0-damage hit at exactly 0 HP is not overkill', () => {
+    expect(hitsOnEnemy(1000, [1000, 0, 1]).hits.map(h => h.overkill)).toEqual([false, false, true]);
+    expect(hitsOnEnemy(-5, [0]).hits[0].overkill).toBe(true);
   });
 });
 
