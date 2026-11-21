@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { CompactMC } from '../data/types';
 import type { Step } from '../solver/solve';
 import type { RawQuest } from '../engine/quest';
+import { en } from '../i18n/en';
 import { describeTurns, formatTurns, slotEnemyNames } from './members';
 
 const mc = { id: 1, name: 'MC', skills: [{ num: 1 }, { num: 2 }, { num: 3, name: 'Order Change' }], unsupported: [] } as unknown as CompactMC;
@@ -18,9 +19,9 @@ describe('describeTurns', () => {
     ]);
   });
   it('formatTurns keeps the text form', () => {
-    expect(formatTurns(turns, ['a', 'b', 'c'], ['d'], (k) => (k ?? '?').toUpperCase(), mc)).toEqual([
+    expect(formatTurns(turns, ['a', 'b', 'c'], ['d'], (k) => (k ?? '?').toUpperCase(), mc, en.turns)).toEqual([
       'T1: A S1 → B · MC 2 · NP A',
-      'T2: Order change: A ↔ D · bersaglio: nemico 2 · NP D',
+      'T2: Order change: A ↔ D · target: enemy 2 · NP D',
     ]);
   });
 });

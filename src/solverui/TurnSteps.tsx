@@ -2,6 +2,7 @@ import { Fragment } from 'react';
 import { FaceIcon } from '../app/ServantIcon';
 import type { TeamMember } from '../engine/state';
 import type { TurnItem } from './members';
+import { useT } from '../i18n';
 
 type Lookup = (key: string | undefined) => TeamMember | undefined;
 /** Enemy name in a field slot at the start of turn t's wave, when known. */
@@ -22,11 +23,12 @@ function Unit({ m, size = 40, label, tone = 'text-sky-300 ring-sky-700' }: { m: 
 const Arrow = ({ children = '→' }: { children?: string }) => <span aria-hidden className="text-zinc-500">{children}</span>;
 
 function Item({ it, unit, enemy }: { it: TurnItem; unit: Lookup; enemy: (slot: number) => string | undefined }) {
+  const t = useT().turns;
   if (it.kind === 'target') {
     const name = enemy(it.slot);
-    const text = name ? `bersaglio: nemico ${it.slot + 1} · ${name}` : `bersaglio: posizione ${it.slot + 1}`;
+    const text = name ? t.targetNamed(it.slot + 1, name) : t.targetPos(it.slot + 1);
     return (
-      <span title={`Bersaglio del turno (posizione ${it.slot + 1} in campo)`}
+      <span title={t.targetTitle(it.slot + 1)}
         className="inline-flex h-6 max-w-48 items-center truncate rounded-full bg-red-950/60 px-2 text-[11px] text-red-200 ring-1 ring-red-800">
         {text}
       </span>
@@ -34,7 +36,7 @@ function Item({ it, unit, enemy }: { it: TurnItem; unit: Lookup; enemy: (slot: n
   }
   if (it.kind === 'skill') {
     const target = unit(it.target);
-    const label = `${unit(it.unit)?.svt.name ?? '?'} skill ${it.num}${it.target ? ` su ${target?.svt.name ?? '?'}` : ''}`;
+    const label = t.skill(unit(it.unit)?.svt.name ?? '?', it.num) + (it.target ? t.on(target?.svt.name ?? '?') : '');
     return (
       <span className="flex items-center gap-1" title={label}>
         <Unit m={unit(it.unit)} label={`S${it.num}`} />
@@ -45,7 +47,7 @@ function Item({ it, unit, enemy }: { it: TurnItem; unit: Lookup; enemy: (slot: n
   if (it.kind === 'mc') {
     const target = unit(it.target);
     return (
-      <span className="flex items-center gap-1" title={`${it.name ?? 'Mystic Code'} (skill MC ${it.num})${it.target ? ` su ${target?.svt.name ?? '?'}` : ''}`}>
+      <span className="flex items-center gap-1" title={t.mc(it.name ?? 'Mystic Code', it.num) + (it.target ? t.on(target?.svt.name ?? '?') : '')}>
         <span className="inline-flex h-10 items-center rounded-md bg-violet-900/60 px-2 text-xs font-bold text-violet-200 ring-1 ring-violet-700">MC {it.num}</span>
         {it.target && <><Arrow /><Unit m={target} size={28} /></>}
       </span>
@@ -53,7 +55,7 @@ function Item({ it, unit, enemy }: { it: TurnItem; unit: Lookup; enemy: (slot: n
   }
   if (it.kind === 'swap') {
     return (
-      <span className="flex items-center gap-1" title={`Order change: ${unit(it.out)?.svt.name ?? '?'} ⇄ ${unit(it.inn)?.svt.name ?? '?'}`}>
+      <span className="flex items-center gap-1" title={`${t.orderChange}: ${unit(it.out)?.svt.name ?? '?'} ⇄ ${unit(it.inn)?.svt.name ?? '?'}`}>
         <Unit m={unit(it.out)} /><Arrow>⇄</Arrow><Unit m={unit(it.inn)} />
       </span>
     );
@@ -89,16 +91,17 @@ export function TurnSteps({ turns, unit, enemyAt }: { turns: TurnItem[][]; unit:
  * The bar fills with the overkill, full at +100%.
  */
 export function MarginBars({ margins }: { margins: number[] }) {
+  const t = useT().turns;
   return (
-    <div className="flex flex-wrap gap-3" aria-label="Margini per wave">
+    <div className="flex flex-wrap gap-3" aria-label={t.margins}>
       {margins.map((m, i) => {
         const pct = Math.round(m * 100);
         const fill = Math.max(0.04, Math.min(1, m - 1));
         return (
-          <span key={i} className="flex items-center gap-1 text-[11px] text-zinc-400" title={`Wave ${i + 1}: danno ${pct}% degli HP`}>
+          <span key={i} className="flex items-center gap-1 text-[11px] text-zinc-400" title={t.marginTitle(i + 1, pct)}>
             W{i + 1}
             <span className="h-1.5 w-14 overflow-hidden rounded-full bg-zinc-700" role="meter" aria-valuemin={0} aria-valuemax={200}
-              aria-valuenow={pct} aria-label={`Margine wave ${i + 1}`}>
+              aria-valuenow={pct} aria-label={t.marginLabel(i + 1)}>
               <span className="block h-full rounded-full bg-sky-500" style={{ width: `${fill * 100}%` }} />
             </span>
             <span className="tabular-nums">{pct}%</span>

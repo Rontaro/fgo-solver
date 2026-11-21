@@ -3,14 +3,13 @@ import type { CompactCE, CompactMC, CompactServant } from '../data/types';
 import type { OwnedServant } from '../roster/types';
 import { FaceIcon } from '../app/ServantIcon';
 import { ServantSearch } from '../app/ServantSearch';
+import { useT } from '../i18n';
 
 export type SlotKind = 'empty' | 'roster' | 'support' | 'free' | 'supportAuto';
 export interface SlotState { kind: SlotKind; collectionNo: number | null; ceName: string; ceLv: number; ceMlb: boolean }
 export const emptySlot = (): SlotState => ({ kind: 'empty', collectionNo: null, ceName: '', ceLv: 100, ceMlb: false });
 
-const KIND_LABEL: Record<SlotKind, string> = {
-  empty: 'Vuoto', roster: 'Dal roster', support: 'Support', free: 'Libero (roster)', supportAuto: 'Libero (support)',
-};
+const KINDS: SlotKind[] = ['empty', 'roster', 'support', 'free', 'supportAuto'];
 const inp = 'rounded border border-zinc-700 bg-zinc-800 px-2 py-1 text-sm';
 
 interface Props {
@@ -20,6 +19,7 @@ interface Props {
 }
 
 export function TeamBuilder({ slots, setSlots, servants, ces, mcs, owned, mcId, setMcId, maxS, setMaxS }: Props) {
+  const t = useT().team;
   const ownedBy = useMemo(() => new Map(owned.map((o) => [o.collectionNo, o])), [owned]);
   const ownedOk = useMemo(() => owned.flatMap((o) => {
     const v = servants.get(o.collectionNo);
@@ -36,14 +36,14 @@ export function TeamBuilder({ slots, setSlots, servants, ces, mcs, owned, mcId, 
 
   return (
     <section className="space-y-3 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
-      <h2 className="font-semibold">Squadra</h2>
+      <h2 className="font-semibold">{t.heading}</h2>
       <datalist id="ce-names">{ceNames.map((n) => <option key={n} value={n} />)}</datalist>
       <div className="grid gap-2 md:grid-cols-3">
         {slots.map((s, i) => (
           <div key={i} className="space-y-1 rounded bg-zinc-800/60 p-2">
-            <p className="text-xs text-zinc-400">{i < 3 ? `Front ${i + 1}` : `Back ${i - 2}`}</p>
+            <p className="text-xs text-zinc-400">{i < 3 ? t.front(i + 1) : t.back(i - 2)}</p>
             <select className={`${inp} w-full`} value={s.kind} onChange={(e) => update(i, { kind: e.target.value as SlotKind, collectionNo: null })}>
-              {(Object.keys(KIND_LABEL) as SlotKind[]).map((k) => <option key={k} value={k}>{KIND_LABEL[k]}</option>)}
+              {KINDS.map((k) => <option key={k} value={k}>{t.kinds[k]}</option>)}
             </select>
             {(s.kind === 'roster' || s.kind === 'support') && (
               <>
@@ -56,17 +56,17 @@ export function TeamBuilder({ slots, setSlots, servants, ces, mcs, owned, mcId, 
                         <span className="block truncate">{v.name}</span>
                         <span className="block truncate text-xs text-zinc-500">{s.kind === 'roster' ? ownedSub(v) : 'lv 90 · NP1 · 10/10/10'}</span>
                       </span>
-                      <button onClick={() => update(i, { collectionNo: null })} aria-label={`Cambia servant (${v.name})`}
+                      <button onClick={() => update(i, { collectionNo: null })} aria-label={t.changeServant(v.name)}
                         className="rounded px-2 py-0.5 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100">×</button>
                     </div>
                   );
                 })() : (
                   <ServantSearch items={s.kind === 'roster' ? ownedOk : allOk} limit={30}
-                    placeholder={s.kind === 'roster' ? 'Cerca nel roster…' : 'Cerca servant…'}
+                    placeholder={s.kind === 'roster' ? t.searchRoster : t.searchServant}
                     sub={s.kind === 'roster' ? ownedSub : undefined}
                     onPick={(v) => update(i, { collectionNo: v.collectionNo })} />
                 )}
-                <input className={`${inp} w-full`} list="ce-names" placeholder="CE (opzionale)" value={s.ceName}
+                <input className={`${inp} w-full`} list="ce-names" placeholder={t.cePlaceholder} value={s.ceName}
                   onChange={(e) => update(i, { ceName: e.target.value })} />
                 <div className="flex items-center gap-3 text-sm">
                   <select className={inp} value={s.ceLv} onChange={(e) => update(i, { ceLv: Number(e.target.value) })}>
@@ -82,13 +82,13 @@ export function TeamBuilder({ slots, setSlots, servants, ces, mcs, owned, mcId, 
         ))}
       </div>
       <div className="flex flex-wrap items-center gap-3 text-sm">
-        <label className="flex items-center gap-2">Mystic Code
+        <label className="flex items-center gap-2">{t.mysticCode}
           <select className={inp} value={mcId ?? ''} onChange={(e) => setMcId(Number(e.target.value))}>
-            {mcs.map((m) => <option key={m.id} value={m.id}>{m.name}{m.unsupported.length ? ' (non supportato)' : ''}</option>)}
+            {mcs.map((m) => <option key={m.id} value={m.id}>{m.name}{m.unsupported.length ? t.mcUnsupported : ''}</option>)}
           </select>
           <span className="text-zinc-400">lv 10</span>
         </label>
-        <label className="flex items-center gap-2">Tempo max (s)
+        <label className="flex items-center gap-2">{t.maxTime}
           <input type="number" min={1} max={600} className={`${inp} w-20`} value={maxS} onChange={(e) => setMaxS(Number(e.target.value) || 20)} />
         </label>
       </div>

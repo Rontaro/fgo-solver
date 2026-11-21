@@ -76,6 +76,8 @@
  *   We read only `name` (shown locally in the account picker) and `region`;
  *   everything else is ignored and never stored.
  */
+import { en } from '../i18n/en';
+import type { Messages } from '../i18n';
 import type { OwnedCE, OwnedServant, Region } from './types';
 
 export interface ChaldeaAccount { index: number; name: string; region?: string; }
@@ -94,6 +96,8 @@ export interface ChaldeaOptions {
   servants?: ReadonlyMap<number, { rarity?: number }>;
   /** Known CE collectionNos for the region. */
   ces?: ReadonlySet<number>;
+  /** Error and warning copy; English by default. */
+  msg?: Messages['chaldea'];
 }
 
 const LV_MAX = [65, 60, 65, 70, 80, 90];
@@ -136,13 +140,14 @@ export async function readChaldeaFile(file: Blob): Promise<string> {
 }
 
 export function parseChaldeaBackup(input: unknown, region: Region, opts: ChaldeaOptions = {}): ChaldeaImport {
+  const msg = opts.msg ?? en.chaldea;
   let data = input;
   if (typeof input === 'string') {
-    try { data = JSON.parse(input); } catch { throw new Error('Non è un file JSON valido'); }
+    try { data = JSON.parse(input); } catch { throw new Error(msg.invalidJson); }
   }
-  if (!isRecord(data)) throw new Error('Backup Chaldea non riconosciuto: manca l\'oggetto principale');
-  if (typeof data.version !== 'number') throw new Error('Backup Chaldea non riconosciuto: manca il campo "version"');
-  if (!Array.isArray(data.users)) throw new Error('Backup Chaldea non riconosciuto: manca il campo "users"');
+  if (!isRecord(data)) throw new Error(msg.noRoot);
+  if (typeof data.version !== 'number') throw new Error(msg.missingField('version'));
+  if (!Array.isArray(data.users)) throw new Error(msg.missingField('users'));
   const users = data.users;
 
   const accounts: ChaldeaAccount[] = users.map((u, index) => {
@@ -158,19 +163,19 @@ export function parseChaldeaBackup(input: unknown, region: Region, opts: Chaldea
     index = 0;
   }
   const user = users[index];
-  if (!isRecord(user)) throw new Error(`Backup Chaldea: account ${index} non trovato`);
-  if (!isRecord(user.servants)) throw new Error('Backup Chaldea non riconosciuto: manca il campo "users[].servants"');
+  if (!isRecord(user)) throw new Error(msg.accountNotFound(index));
+  if (!isRecord(user.servants)) throw new Error(msg.missingField('users[].servants'));
 
   const warnings: string[] = [];
   const accRegion = accounts[index].region ?? 'jp';
   if (accRegion !== region.toLowerCase()) {
-    warnings.push(`L'account "${accounts[index].name}" è della regione ${accRegion.toUpperCase()}, il roster è ${region}.`);
+    warnings.push(msg.regionMismatch(accounts[index].name, accRegion.toUpperCase(), region));
   }
 
   const clamp = (v: number, min: number, max: number, what: string) => {
     if (v >= min && v <= max) return v;
     const c = Math.min(max, Math.max(min, v));
-    warnings.push(`${what}: ${v} fuori da ${min}..${max}, impostato a ${c}`);
+    warnings.push(msg.clamped(what, v, min, max, c));
     return c;
   };
 
@@ -186,11 +191,11 @@ export function parseChaldeaBackup(input: unknown, region: Region, opts: Chaldea
 
     const info = opts.servants?.get(no);
     const label = `Servant #${no}`;
-    if (opts.servants && !info) warnings.push(`${label}: non presente nei dati ${region}, importato comunque`);
+    if (opts.servants && !info) warnings.push(msg.notInData(label, region));
     let rarity = info?.rarity;
     if (rarity === undefined) {
       rarity = 5;
-      if (info || !opts.servants) warnings.push(`${label}: rarità sconosciuta, livello calcolato come 5★`);
+      if (info || !opts.servants) warnings.push(msg.unknownRarity(label));
     }
 
     const ascension = Math.min(4, Math.max(0, num(cur.ascension, 0)));
@@ -202,14 +207,14 @@ export function parseChaldeaBackup(input: unknown, region: Region, opts: Chaldea
 
     servants.push({
       collectionNo: no,
-      lv: clamp(chaldeaLevel(rarity, ascension, grail), 1, 120, `${label} livello`),
+      lv: clamp(chaldeaLevel(rarity, ascension, grail), 1, 120, msg.level(label)),
       npLv: clamp(num(cur.npLv, 1), 1, 5, `${label} NP`),
       skillLv: [0, 1, 2].map((i) => clamp(num(skills[i], 1), 1, 10, `${label} skill ${i + 1}`)) as OwnedServant['skillLv'],
       append2Lv: clamp(num(appends[1], 0), 0, 10, `${label} append 2`),
       fou: clamp(fou, 0, 2000, `${label} Fou ATK`),
     });
   }
-  if (dups) warnings.push(`${dups} servant duplicati ignorati (si tiene solo la copia principale)`);
+  if (dups) warnings.push(msg.dups(dups));
 
   const ces: OwnedCE[] = [];
   for (const [key, st] of Object.entries(isRecord(user.craftEssences) ? user.craftEssences : {})) {
@@ -217,10 +222,10 @@ export function parseChaldeaBackup(input: unknown, region: Region, opts: Chaldea
     const no = Number(key);
     if (!Number.isInteger(no) || no < 1) continue;
     const label = `CE #${no}`;
-    if (opts.ces && !opts.ces.has(no)) warnings.push(`${label}: non presente nei dati ${region}, importato comunque`);
+    if (opts.ces && !opts.ces.has(no)) warnings.push(msg.notInData(label, region));
     ces.push({
       collectionNo: no,
-      lv: clamp(num(st.lv, 1), 1, 100, `${label} livello`),
+      lv: clamp(num(st.lv, 1), 1, 100, msg.level(label)),
       mlb: num(st.limitCount, 0) >= 4,
     });
   }

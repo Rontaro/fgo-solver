@@ -6,6 +6,7 @@ import { queryWords, servantScore } from '../data/search';
 import type { CompactServant } from '../data/types';
 import { type ChaldeaAccount, type ChaldeaOptions, parseChaldeaBackup, readChaldeaFile } from './chaldea';
 import { ImportDialog } from './ImportDialog';
+import { useT } from '../i18n';
 import { IdbRosterStore, RosterValidationError, exportJson, importJson } from './store';
 import type { OwnedServant, RosterDoc } from './types';
 
@@ -38,19 +39,21 @@ function NumberCell({ value, min, max, onChange, label }: {
 }
 
 function UnsupportedBadge({ s }: { s: CompactServant | undefined }) {
+  const t = useT();
   if (!s || s.unsupported.length === 0) return null;
   return (
     <span
-      title={`Effetti non gestiti: ${s.unsupported.join(', ')}`}
+      title={t.roster.unsupportedTitle(s.unsupported.join(', '))}
       className="ml-2 cursor-help rounded bg-amber-900/60 px-1.5 py-0.5 text-xs text-amber-300"
     >
-      non simulabile
+      {t.roster.unsupportedBadge}
     </span>
   );
 }
 
 export function RosterPage() {
   const { region, data } = useRegionData();
+  const t = useT();
   const [doc, setDoc] = useState<RosterDoc | null>(null);
   const [filter, setFilter] = useState('');
   const [pendingImport, setPendingImport] = useState<RosterDoc | null>(null);
@@ -97,7 +100,7 @@ export function RosterPage() {
   const addable = useMemo(() => (servants ? [...servants.values()].filter((s) => !owned.has(s.collectionNo)) : []),
     [servants, owned]);
 
-  if (!doc) return <p className="text-zinc-400">Caricamento roster…</p>;
+  if (!doc) return <p className="text-zinc-400">{t.roster.loading}</p>;
 
   const words = queryWords(filter);
   const rows = doc.servants.filter((o) => {
@@ -133,7 +136,7 @@ export function RosterPage() {
       setImportWarnings([]);
       setPendingImport(importJson(await file.text(), region));
     } catch (e) {
-      if (e instanceof RosterValidationError) setImportError(`Errore in ${e.path}: ${e.message.slice(e.path.length + 2)}`);
+      if (e instanceof RosterValidationError) setImportError(t.roster.validationError(e.path, e.message.slice(e.path.length + 2)));
       else setImportError(e instanceof Error ? e.message : String(e));
     } finally {
       if (fileInput.current) fileInput.current.value = '';
@@ -144,6 +147,7 @@ export function RosterPage() {
     // rarity is read defensively: older cached data may not carry it
     servants: new Map([...(servants?.values() ?? [])].map((s) => [s.collectionNo, { rarity: (s as { rarity?: number }).rarity }])),
     ces: data ? new Set(data.ces.map((c) => c.collectionNo)) : undefined,
+    msg: t.chaldea,
   });
 
   const chaldeaImport = (raw: unknown, accountIndex: number) => {
@@ -160,11 +164,11 @@ export function RosterPage() {
     try {
       const raw: unknown = JSON.parse(await readChaldeaFile(file));
       const { accounts } = parseChaldeaBackup(raw, region, chaldeaOpts());
-      if (accounts.length === 0) throw new Error('Il backup Chaldea non contiene account.');
+      if (accounts.length === 0) throw new Error(t.roster.noAccounts);
       if (accounts.length === 1) chaldeaImport(raw, 0);
       else setChaldeaPick({ raw, accounts, index: Math.max(0, accounts.findIndex((a) => a.region === region.toLowerCase())) });
     } catch (e) {
-      setImportError(e instanceof SyntaxError ? 'Non è un file JSON valido.' : e instanceof Error ? e.message : String(e));
+      setImportError(e instanceof SyntaxError ? t.roster.invalidJson : e instanceof Error ? e.message : String(e));
     } finally {
       if (chaldeaInput.current) chaldeaInput.current.value = '';
     }
@@ -177,17 +181,17 @@ export function RosterPage() {
     <section className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
         <ServantSearch items={addable} onPick={(s) => add(s.collectionNo)} limit={MAX_RESULTS}
-          placeholder="Aggiungi servant (nome o soprannome)…" className="w-full sm:w-72" />
+          placeholder={t.roster.addPlaceholder} className="w-full sm:w-72" />
         <input
-          value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filtra roster…"
+          value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={t.roster.filterPlaceholder}
           className={`${input} sm:w-48`}
         />
         <div className="flex gap-2 sm:ml-auto">
-          <button onClick={doExport} className={btn}>Esporta JSON</button>
-          <button onClick={() => fileInput.current?.click()} className={btn}>Importa JSON</button>
+          <button onClick={doExport} className={btn}>{t.roster.exportJson}</button>
+          <button onClick={() => fileInput.current?.click()} className={btn}>{t.roster.importJson}</button>
           <input ref={fileInput} type="file" accept="application/json,.json" className="hidden"
             onChange={(e) => onFile(e.target.files?.[0])} />
-          <button onClick={() => chaldeaInput.current?.click()} className={btn}>Importa da Chaldea</button>
+          <button onClick={() => chaldeaInput.current?.click()} className={btn}>{t.roster.importChaldea}</button>
           <input ref={chaldeaInput} type="file" accept="application/json,.json,.gz" className="hidden"
             onChange={(e) => onChaldeaFile(e.target.files?.[0])} />
         </div>
@@ -195,8 +199,8 @@ export function RosterPage() {
 
       {importError && (
         <div className="flex items-start justify-between rounded border border-red-900 bg-red-950/50 px-3 py-2 text-sm text-red-300">
-          <span>Importazione non riuscita. {importError}</span>
-          <button onClick={() => setImportError(null)} className="ml-3 text-red-400 hover:text-red-200" aria-label="Chiudi">×</button>
+          <span>{t.roster.importFailed(importError)}</span>
+          <button onClick={() => setImportError(null)} className="ml-3 text-red-400 hover:text-red-200" aria-label={t.common.close}>×</button>
         </div>
       )}
 
@@ -204,8 +208,8 @@ export function RosterPage() {
         <table className="w-full text-sm">
           <thead className="text-left text-xs uppercase text-zinc-500">
             <tr className="border-b border-zinc-800">
-              <th className="px-3 py-2">Servant</th>
-              <th className="px-3 py-2">Classe</th>
+              <th className="px-3 py-2">{t.roster.colServant}</th>
+              <th className="px-3 py-2">{t.roster.colClass}</th>
               <th className="px-2 py-2">Lv</th>
               <th className="px-2 py-2">NP</th>
               <th className="px-2 py-2">S1</th>
@@ -226,43 +230,43 @@ export function RosterPage() {
                     <div className="flex items-center gap-2">
                       <FaceIcon face={s?.face} name={s?.name ?? `#${no}`} />
                       <span>
-                        {s ? s.name : <span className="text-zinc-500">Sconosciuto #{no}</span>}
+                        {s ? s.name : <span className="text-zinc-500">{t.roster.unknown(no)}</span>}
                         <UnsupportedBadge s={s} />
                       </span>
                     </div>
                   </td>
                   <td className="px-3 py-1.5 capitalize text-zinc-400">{s?.className ?? '—'}</td>
-                  <td className="px-2 py-1.5"><NumberCell label="Livello" value={o.lv} min={1} max={120} onChange={(v) => setServant(no, { lv: v })} /></td>
-                  <td className="px-2 py-1.5"><NumberCell label="Livello NP" value={o.npLv} min={1} max={5} onChange={(v) => setServant(no, { npLv: v })} /></td>
+                  <td className="px-2 py-1.5"><NumberCell label={t.roster.level} value={o.lv} min={1} max={120} onChange={(v) => setServant(no, { lv: v })} /></td>
+                  <td className="px-2 py-1.5"><NumberCell label={t.roster.npLevel} value={o.npLv} min={1} max={5} onChange={(v) => setServant(no, { npLv: v })} /></td>
                   {[0, 1, 2].map((i) => (
-                    <td key={i} className="px-2 py-1.5"><NumberCell label={`Skill ${i + 1}`} value={o.skillLv[i]} min={1} max={10} onChange={(v) => setSkill(o, i, v)} /></td>
+                    <td key={i} className="px-2 py-1.5"><NumberCell label={t.roster.skill(i + 1)} value={o.skillLv[i]} min={1} max={10} onChange={(v) => setSkill(o, i, v)} /></td>
                   ))}
                   <td className="px-2 py-1.5"><NumberCell label="Append 2" value={o.append2Lv} min={0} max={10} onChange={(v) => setServant(no, { append2Lv: v })} /></td>
                   <td className="px-2 py-1.5"><NumberCell label="Fou" value={o.fou} min={0} max={2000} onChange={(v) => setServant(no, { fou: v })} /></td>
                   <td className="px-2 py-1.5 text-right">
-                    <button onClick={() => remove(no)} className="rounded px-2 py-0.5 text-xs text-red-400 hover:bg-red-950">Rimuovi</button>
+                    <button onClick={() => remove(no)} className="rounded px-2 py-0.5 text-xs text-red-400 hover:bg-red-950">{t.roster.remove}</button>
                   </td>
                 </tr>
               );
             })}
             {rows.length === 0 && (
               <tr><td colSpan={10} className="px-3 py-6 text-center text-zinc-500">
-                {doc.servants.length === 0 ? 'Nessun servant nel roster. Aggiungine uno con la ricerca.' : 'Nessun servant corrisponde al filtro.'}
+                {doc.servants.length === 0 ? t.roster.empty : t.roster.noMatch}
               </td></tr>
             )}
           </tbody>
         </table>
       </div>
       <p className="text-xs text-zinc-500">
-        {doc.servants.length} servant · {saving ? 'Salvataggio…' : 'Salvato'}
+        {t.roster.count(doc.servants.length)} · {saving ? t.roster.saving : t.roster.saved}
       </p>
 
       {chaldeaPick && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true">
           <div className="w-full max-w-sm rounded-lg border border-zinc-800 bg-zinc-900 p-5 shadow-xl">
-            <h2 className="mb-3 text-lg font-semibold">Scegli l'account Chaldea</h2>
+            <h2 className="mb-3 text-lg font-semibold">{t.roster.chooseAccount}</h2>
             <select
-              aria-label="Account" value={chaldeaPick.index}
+              aria-label={t.roster.account} value={chaldeaPick.index}
               onChange={(e) => setChaldeaPick({ ...chaldeaPick, index: Number(e.target.value) })}
               className={`${input} mb-5`}
             >
@@ -271,7 +275,7 @@ export function RosterPage() {
               ))}
             </select>
             <div className="flex justify-end gap-2">
-              <button onClick={() => setChaldeaPick(null)} className={btn}>Annulla</button>
+              <button onClick={() => setChaldeaPick(null)} className={btn}>{t.common.cancel}</button>
               <button
                 onClick={() => {
                   try { chaldeaImport(chaldeaPick.raw, chaldeaPick.index); } catch (e) {
@@ -280,7 +284,7 @@ export function RosterPage() {
                   }
                 }}
                 className="rounded bg-sky-600 px-3 py-1.5 text-sm font-medium hover:bg-sky-500"
-              >Continua</button>
+              >{t.common.continue}</button>
             </div>
           </div>
         </div>

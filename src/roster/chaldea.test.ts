@@ -46,10 +46,10 @@ describe('parseChaldeaBackup', () => {
   it('warns on clamps, unknown servants, duplicates and region mismatch', () => {
     const r = parseChaldeaBackup(backup, 'JP', { accountIndex: 0, servants: known, ces });
     expect(r.warnings).toEqual(expect.arrayContaining([
-      expect.stringContaining('regione NA'),
-      expect.stringContaining('Servant #9999: non presente'),
-      'Servant #9999 Fou ATK: 2500 fuori da 0..2000, impostato a 2000',
-      expect.stringContaining('1 servant duplicati'),
+      expect.stringContaining('region NA'),
+      expect.stringContaining('Servant #9999: not in the JP data'),
+      'Servant #9999 Fou ATK: 2500 outside 0..2000, set to 2000',
+      expect.stringContaining('1 duplicate servants'),
     ]));
     expect(r.warnings).toHaveLength(4);
   });

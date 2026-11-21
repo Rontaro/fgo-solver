@@ -3,6 +3,7 @@ import type { TeamMember } from '../engine/state';
 import type { OwnedServant } from '../roster/types';
 import type { Step } from '../solver/solve';
 import type { RawQuest } from '../engine/quest';
+import type { Messages } from '../i18n';
 
 export const SUPPORT_POOL_CAP = 400;
 
@@ -75,13 +76,13 @@ export function slotEnemyNames(raw: RawQuest): (string | undefined)[][] {
 
 /** One line per turn, e.g. "T1: A S1 → B · MC 2 · NP A". front/back are the starting unit keys. */
 export function formatTurns(turns: Step[][], front: (string | null)[], back: (string | null)[],
-  name: (key: string | undefined) => string, mc: CompactMC | undefined): string[] {
+  name: (key: string | undefined) => string, mc: CompactMC | undefined, msg: Messages['turns']): string[] {
   return describeTurns(turns, front, back, mc).map((items, t) => `T${t + 1}: ` + items.map((s) => {
     const to = 'target' in s && s.target ? ` → ${name(s.target)}` : '';
     if (s.kind === 'np') return `NP ${name(s.unit)}`;
-    if (s.kind === 'target') return `bersaglio: nemico ${s.slot + 1}`;
+    if (s.kind === 'target') return msg.target(s.slot + 1);
     if (s.kind === 'skill') return `${name(s.unit)} S${s.num}${to}`;
-    if (s.kind === 'swap') return `Order change: ${name(s.out)} ↔ ${name(s.inn)}`;
+    if (s.kind === 'swap') return `${msg.orderChange}: ${name(s.out)} ↔ ${name(s.inn)}`;
     return `${s.name ?? `MC ${s.num}`}${to}`;
   }).join(' · '));
 }

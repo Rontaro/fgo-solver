@@ -3,6 +3,7 @@ import type { QuestWar, Region } from '../data/types';
 import { questFromAtlas, UnsupportedQuestError, type RawQuest } from '../engine/quest';
 import { loadFavs, loadRecent, pushRecent, saveFavs, saveRecent, type RecentNode } from './questPrefs';
 import { lastPhase, questIndex, searchQuests, type QuestItem } from './questSearch';
+import { useT } from '../i18n';
 
 export interface PickedQuest { raw: RawQuest; label: string; unsupported: readonly string[] | null }
 
@@ -34,10 +35,11 @@ function TypeBadge({ type }: { type: string }) {
 }
 
 function Star({ on, onToggle, name, tabIndex }: { on: boolean; onToggle: () => void; name: string; tabIndex?: number }) {
+  const t = useT().quest;
   return (
     <button type="button" tabIndex={tabIndex} aria-pressed={on}
-      aria-label={on ? `Rimuovi ${name} dai preferiti` : `Aggiungi ${name} ai preferiti`}
-      title={on ? 'Rimuovi dai preferiti' : 'Aggiungi ai preferiti'}
+      aria-label={on ? t.favRemove(name) : t.favAdd(name)}
+      title={on ? t.favRemoveTitle : t.favAddTitle}
       onMouseDown={(e) => e.preventDefault()}
       onClick={(e) => { e.stopPropagation(); onToggle(); }}
       className={`shrink-0 rounded px-1 text-base leading-none ${on ? 'text-amber-400' : 'text-zinc-600 hover:text-zinc-300'}`}>
@@ -49,6 +51,8 @@ function Star({ on, onToggle, name, tabIndex }: { on: boolean; onToggle: () => v
 const where = (it: QuestItem) => it.war.warName + (it.quest.spot ? ` · ${it.quest.spot}` : '');
 
 export function QuestPicker({ region, wars, onChange }: { region: Region; wars: QuestWar[]; onChange: (q: PickedQuest | null) => void }) {
+  const tt = useT();
+  const t = tt.quest;
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
   const [sel, setSel] = useState<RecentNode | null>(null);
@@ -116,7 +120,7 @@ export function QuestPicker({ region, wars, onChange }: { region: Region; wars: 
 
   return (
     <section className="space-y-2 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
-      <h2 className="font-semibold">Quest</h2>
+      <h2 className="font-semibold">{t.heading}</h2>
       {item && phase !== null && (
         <div className="flex flex-wrap items-center gap-2 rounded bg-zinc-800/60 px-3 py-2">
           <Star on={favs.includes(item.quest.id)} onToggle={() => toggleFav(item.quest.id)} name={item.quest.name} />
@@ -127,16 +131,16 @@ export function QuestPicker({ region, wars, onChange }: { region: Region; wars: 
           <TypeBadge type={item.quest.type} />
           {item.quest.phases.length > 1 && (
             <details className="text-xs text-zinc-400">
-              <summary className="cursor-pointer select-none">Fase {phase}</summary>
-              <select aria-label="Fase" className={`${inp} mt-1 w-auto`} value={phase} onChange={(e) => choose(item, Number(e.target.value))}>
-                {item.quest.phases.map((p) => <option key={p} value={p}>Fase {p}</option>)}
+              <summary className="cursor-pointer select-none">{t.phase(phase)}</summary>
+              <select aria-label={t.phaseLabel} className={`${inp} mt-1 w-auto`} value={phase} onChange={(e) => choose(item, Number(e.target.value))}>
+                {item.quest.phases.map((p) => <option key={p} value={p}>{t.phase(p)}</option>)}
               </select>
             </details>
           )}
         </div>
       )}
       <input
-        className={inp} placeholder="Cerca quest, guerra o luogo…" value={query} aria-label="Cerca quest"
+        className={inp} placeholder={t.searchPlaceholder} value={query} aria-label={t.searchLabel}
         role="combobox" aria-expanded={results.length > 0} aria-controls={listId} aria-autocomplete="list"
         aria-activedescendant={results[active] ? `${listId}-${active}` : undefined}
         onChange={(e) => { setQuery(e.target.value); setActive(0); }}
@@ -151,22 +155,22 @@ export function QuestPicker({ region, wars, onChange }: { region: Region; wars: 
         <div className="space-y-1">
           {favItems.length > 0 && (
             <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-xs text-zinc-500">Preferiti</span>
+              <span className="text-xs text-zinc-500">{t.favorites}</span>
               {favItems.map((it) => chip(it, undefined, `f${it.quest.id}`, true))}
             </div>
           )}
           {recentItems.length > 0 && (
             <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-xs text-zinc-500">Recenti</span>
+              <span className="text-xs text-zinc-500">{t.recent}</span>
               {recentItems.map(({ it, phase: ph }) => chip(it, ph, `r${it.quest.id}`, false))}
             </div>
           )}
         </div>
       )}
       {query.trim() && (results.length === 0
-        ? <p className="text-sm text-zinc-500">Nessuna quest trovata.</p>
+        ? <p className="text-sm text-zinc-500">{t.noResults}</p>
         : (
-          <ul id={listId} role="listbox" aria-label="Risultati quest" className="max-h-80 overflow-auto rounded border border-zinc-800">
+          <ul id={listId} role="listbox" aria-label={t.results} className="max-h-80 overflow-auto rounded border border-zinc-800">
             {results.map((it, i) => (
               <li key={it.quest.id} id={`${listId}-${i}`} role="option" aria-selected={i === active}
                 onClick={() => choose(it)} onMouseEnter={() => setActive(i)}
@@ -181,11 +185,11 @@ export function QuestPicker({ region, wars, onChange }: { region: Region; wars: 
             ))}
           </ul>
         ))}
-      {err && <p className="text-sm text-red-400">Errore nel caricamento della quest: {err}</p>}
-      {quest && phase !== null && !picked && !err && <p className="text-sm text-zinc-400">Caricamento quest…</p>}
+      {err && <p className="text-sm text-red-400">{t.loadError(err)}</p>}
+      {quest && phase !== null && !picked && !err && <p className="text-sm text-zinc-400">{t.loading}</p>}
       {picked?.unsupported && (
         <div className="rounded border border-amber-900 bg-amber-950/50 px-3 py-2 text-sm text-amber-300">
-          <p className="font-semibold">Nodo non supportato</p>
+          <p className="font-semibold">{t.unsupported}</p>
           <ul className="list-disc pl-5">{picked.unsupported.map((r, i) => <li key={i}>{r}</li>)}</ul>
         </div>
       )}
@@ -193,9 +197,9 @@ export function QuestPicker({ region, wars, onChange }: { region: Region; wars: 
         <div className="grid gap-2 sm:grid-cols-3">
           {[...picked.raw.stages].sort((a, b) => a.wave - b.wave).map((st) => (
             <div key={st.wave} className="rounded bg-zinc-800 p-2 text-sm">
-              <p className="font-semibold text-sky-400">Wave {st.wave}</p>
+              <p className="font-semibold text-sky-400">{t.wave(st.wave)}</p>
               {st.enemies.filter((e) => e.deck === 'enemy').sort((a, b) => a.deckId - b.deckId).map((e) => (
-                <p key={e.deckId}>{e.name} <span className="text-zinc-400">· {e.svt.className} · {e.hp.toLocaleString('it-IT')} HP</span></p>
+                <p key={e.deckId}>{e.name} <span className="text-zinc-400">· {e.svt.className} · {e.hp.toLocaleString(tt.locale)} HP</span></p>
               ))}
             </div>
           ))}

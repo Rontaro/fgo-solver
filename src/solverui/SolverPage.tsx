@@ -14,6 +14,7 @@ import { MarginBars, TurnSteps } from './TurnSteps';
 import { FaceIcon } from '../app/ServantIcon';
 import { toFgaCommand } from '../fga/command';
 import { toFgaConfig } from '../fga/config';
+import { useT } from '../i18n';
 
 const store = new IdbRosterStore();
 const MC_LV = 10;
@@ -25,6 +26,8 @@ interface Run { kind: 'team' | 'autocomplete'; front: string[]; back: string[]; 
 
 export function SolverPage() {
   const { region, data } = useRegionData();
+  const tt = useT();
+  const t = tt.solver;
   const [owned, setOwned] = useState<OwnedServant[]>([]);
   const [quest, setQuest] = useState<PickedQuest | null>(null);
   const [slots, setSlots] = useState<SlotState[]>(() => Array.from({ length: 6 }, emptySlot));
@@ -66,12 +69,12 @@ export function SolverPage() {
   const locked = slots.map(memberOf);
   const keys = locked.flatMap((m) => (m ? [m.key] : []));
   const isAuto = slots.some((s) => s.kind === 'free' || s.kind === 'supportAuto');
-  const problem = !quest ? 'Scegli una quest.'
-    : quest.unsupported ? 'Nodo non supportato.'
-    : !mc ? 'Scegli un Mystic Code.'
-    : new Set(keys).size !== keys.length ? 'Lo stesso servant del roster è in due slot.'
-    : slots.some((s, i) => (s.kind === 'roster' || s.kind === 'support') && !locked[i]) ? 'Completa gli slot (scegli il servant).'
-    : !isAuto && keys.length === 0 ? 'La squadra è vuota.'
+  const problem = !quest ? t.noQuest
+    : quest.unsupported ? t.unsupportedNode
+    : !mc ? t.noMc
+    : new Set(keys).size !== keys.length ? t.dupServant
+    : slots.some((s, i) => (s.kind === 'roster' || s.kind === 'support') && !locked[i]) ? t.incomplete
+    : !isAuto && keys.length === 0 ? t.emptyTeam
     : null;
 
   const name = (k: string | undefined) => (k ? members.current.get(k)?.svt.name ?? k : '?');
@@ -116,7 +119,7 @@ export function SolverPage() {
         setExhausted(m.result.exhausted); setRunning(false); w.terminate();
       } else if (m.type === 'error') { setError({ message: m.message, reasons: m.reasons }); setRunning(false); w.terminate(); }
     };
-    w.onerror = (e) => { setError({ message: e.message || 'errore del worker' }); setRunning(false); };
+    w.onerror = (e) => { setError({ message: e.message || t.workerError }); setRunning(false); };
     w.postMessage(msg);
   };
 
@@ -157,38 +160,38 @@ export function SolverPage() {
       <section className="space-y-3 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
         <div className="flex flex-wrap items-center gap-3">
           <button onClick={start} disabled={running || !!problem}
-            className="rounded bg-sky-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-sky-500 disabled:opacity-40">Avvia</button>
+            className="rounded bg-sky-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-sky-500 disabled:opacity-40">{t.start}</button>
           <button onClick={stop} disabled={!running}
-            className="rounded bg-zinc-700 px-4 py-1.5 text-sm hover:bg-zinc-600 disabled:opacity-40">Ferma</button>
+            className="rounded bg-zinc-700 px-4 py-1.5 text-sm hover:bg-zinc-600 disabled:opacity-40">{t.stop}</button>
           {problem && <span className="text-sm text-zinc-400">{problem}</span>}
-          {running && <span className="text-sm text-sky-400">In esecuzione…</span>}
+          {running && <span className="text-sm text-sky-400">{t.running}</span>}
         </div>
         {stats && (
           <p className="text-xs text-zinc-400">
             {(stats.ms / 1000).toFixed(1)} s
-            {'nodes' in stats ? ` · ${stats.nodes.toLocaleString('it-IT')} nodi · ${stats.memoHits.toLocaleString('it-IT')} memo hit`
-              : ` · ${stats.triedTeams} squadre provate`}
-            {` · ${found.length} soluzioni`}
-            {exhausted !== null && (exhausted ? ' · ricerca completa' : ' · ricerca interrotta (tempo o stop)')}
+            {'nodes' in stats ? t.statsNodes(stats.nodes.toLocaleString(tt.locale), stats.memoHits.toLocaleString(tt.locale))
+              : t.statsTeams(stats.triedTeams)}
+            {t.statsSolutions(found.length)}
+            {exhausted !== null && (exhausted ? t.exhausted : t.interrupted)}
           </p>
         )}
         {error && (
           <div className="rounded border border-red-900 bg-red-950/50 px-3 py-2 text-sm text-red-300">
-            <p>Errore: {error.message}</p>
+            <p>{error.reasons ? t.unsupportedQuest : t.error(error.message)}</p>
             {error.reasons && <ul className="list-disc pl-5">{error.reasons.map((r, i) => <li key={i}>{r}</li>)}</ul>}
           </div>
         )}
         {!running && run && found.length === 0 && !error && (
           <p className="text-sm text-amber-300">
-            Nessuna soluzione.{' '}
+            {t.noSolution}{' '}
             {best ? (best.missingDamagePct !== undefined
-              ? `Arrivato alla wave ${best.wave}: manca ${(best.missingDamagePct * 100).toFixed(1)}% di danno.`
-              : `Arrivato alla wave ${best.wave}: NP non carico.`) : ''}
+              ? t.missingDamage(best.wave, (best.missingDamagePct * 100).toFixed(1))
+              : t.npNotCharged(best.wave)) : ''}
           </p>
         )}
         {run && sorted.length > 0 && (
           <label className="flex items-center gap-2 text-xs text-zinc-400">
-            <input type="checkbox" checked={showText} onChange={(e) => setShowText(e.target.checked)} /> mostra testo
+            <input type="checkbox" checked={showText} onChange={(e) => setShowText(e.target.checked)} /> {t.showText}
           </label>
         )}
         {run && sorted.map((f, i) => {
@@ -197,12 +200,12 @@ export function SolverPage() {
           return (
             <div key={i} className="space-y-1 rounded bg-zinc-800 p-3 text-sm">
               <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-zinc-400">
-                <span>{f.solution.actions} azioni{f.solution.usesSwap ? ' · order change' : ''}</span>
+                <span>{t.actions(f.solution.actions)}{f.solution.usesSwap ? t.orderChange : ''}</span>
                 <MarginBars margins={f.solution.margins} />
               </div>
               {f.team && (
                 <div className="flex flex-wrap items-center gap-1.5 text-sky-300">
-                  <span className="text-xs">Squadra:</span>
+                  <span className="text-xs">{t.team}</span>
                   {f.team.map((k) => <FaceIcon key={k} face={unit(k)?.svt.face} name={name(k)} size={28} />)}
                 </div>
               )}
@@ -210,16 +213,16 @@ export function SolverPage() {
                 enemyAt={(t, slot) => run.slotNames[t]?.[slot]} />
               {showText && (
                 <div className="border-t border-zinc-700 pt-1 text-xs text-zinc-300">
-                  {formatTurns(f.solution.turns, front, back, name, run.mc).map((l, j) => <p key={j}>{l}</p>)}
+                  {formatTurns(f.solution.turns, front, back, name, run.mc, tt.turns).map((l, j) => <p key={j}>{l}</p>)}
                 </div>
               )}
               {FGA && (
                 <div className="pt-1">
                   <div className="flex flex-wrap gap-2">
-                    <button onClick={() => downloadFga(f, tk, i + 1)} className="rounded bg-zinc-700 px-2 py-1 text-xs hover:bg-zinc-600">Scarica .fga</button>
-                    <button onClick={() => copyFga(f, tk)} className="rounded bg-zinc-700 px-2 py-1 text-xs hover:bg-zinc-600">Copia comando</button>
+                    <button onClick={() => downloadFga(f, tk, i + 1)} className="rounded bg-zinc-700 px-2 py-1 text-xs hover:bg-zinc-600">{t.downloadFga}</button>
+                    <button onClick={() => copyFga(f, tk)} className="rounded bg-zinc-700 px-2 py-1 text-xs hover:bg-zinc-600">{t.copyCommand}</button>
                   </div>
-                  <p className="mt-1 text-xs text-zinc-500">FGA automatizza il gioco: va contro i termini di FGO, usalo a tuo rischio.</p>
+                  <p className="mt-1 text-xs text-zinc-500">{t.fgaWarning}</p>
                 </div>
               )}
             </div>
