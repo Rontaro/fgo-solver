@@ -64,3 +64,12 @@ export interface Constants {
   classRel: Record<string, Record<string, number>>;
   attrRel: Record<string, Record<string, number>>;
 }
+
+export interface QuestEntry {
+  id: number; name: string; type: string; phases: number[];
+  openedAt: number; closedAt: number;
+}
+
+export interface QuestWar { warId: number; warName: string; eventId: number; quests: QuestEntry[]; }
+
+export interface DataVersion { hash: string; timestamp: number; }
