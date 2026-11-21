@@ -305,6 +305,13 @@ export function compactServant(svt: any): CompactServant {
   const unsupported: string[] = [];
   // appendPassive num 100..104 = append 1..5; append 2 (num 101) is "Load Magical Energy".
   const selfTraits = new Set<number>(svt.traits.map((t: any) => t.id));
+  // A form change (e.g. Mélusine, Ptolemaios) swaps skills and NP: the highest
+  // priority skill/NP picked below may only exist after it. Checked on every
+  // skill and NP variant, not only the chosen ones.
+  const groups = [...svt.skills, ...svt.noblePhantasms];
+  if (groups.some((g: any) => g.functions.some((f: any) => f.funcType === 'transformServant' && f.funcTargetTeam !== 'enemy'))) {
+    unsupported.push('func:transformServant');
+  }
   const append2 = svt.appendPassive?.find((a: any) => a.num === 101)?.skill;
   return {
     id: svt.id, collectionNo: svt.collectionNo, name: svt.name,

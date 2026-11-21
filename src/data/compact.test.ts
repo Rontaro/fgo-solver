@@ -4,6 +4,9 @@ import altria from '../../test/fixtures/altria.json';
 import kscope from '../../test/fixtures/kaleidoscope.json';
 import mcCombat from '../../test/fixtures/mc-combat.json';
 import siegfried from '../../test/fixtures/siegfried.json';
+import vritra from '../../test/fixtures/vritra.json';
+import ibuki from '../../test/fixtures/ibuki.json';
+import skadi from '../../test/fixtures/skadi.json';
 import { compactServant, compactCE, compactMC, convertFunctions } from './compact';
 
 describe('compactServant', () => {
@@ -267,6 +270,35 @@ describe('compactServant NP selection', () => {
     expect(s.np!.seMult![1][0]).toBe(1625);
     expect(s.np!.mult[0][0]).toBe(4000);
     expect(s.unsupported).toEqual([]);
+  });
+});
+
+describe('popular farming servants (real fixtures)', () => {
+  it('Vritra: arts AoE, simulable', () => {
+    const s = compactServant(vritra as any);
+    expect(s.unsupported).toEqual([]);
+    expect(s.np).toMatchObject({ card: 'arts', aoe: true });
+    expect(s.skills[1].effects.map((e) => e.kind)).toEqual(['powerUp', 'gainNp']);
+  });
+  it('Ibuki-Douji: damageNpPierce AoE buster, addDamage passive as dmgPlus, simulable', () => {
+    const s = compactServant(ibuki as any);
+    expect(s.unsupported).toEqual([]);
+    expect(s.np).toMatchObject({ card: 'buster', aoe: true });
+    const plus = s.passives.find((e) => e.kind === 'dmgPlus')!;
+    expect(plus.target).toBe('self');
+    expect(plus.lv[0].value).toBeGreaterThan(0);
+  });
+  it('Scathach-Skadi: support NP (null), arts up / NP battery, simulable', () => {
+    const s = compactServant(skadi as any);
+    expect(s.unsupported).toEqual([]);
+    expect(s.np).toBeNull();
+    expect(s.skills[0].effects[0]).toMatchObject({ kind: 'cardUp', target: 'ptOne', cards: ['quick'] });
+    expect(s.skills[2].effects[0]).toMatchObject({ kind: 'gainNp', target: 'ptOne' });
+  });
+  it('a form change anywhere in the kit marks the servant unsupported', () => {
+    const tf = { funcType: 'transformServant', funcTargetType: 'self', funcTargetTeam: 'playerAndEnemy', functvals: [], buffs: [], svals: [{ Rate: 5000, Value: 1 }] };
+    const skills = (altria as any).skills.map((k: any) => (k.num === 3 && k.priority === 1 ? { ...k, functions: [...k.functions, tf] } : k));
+    expect(compactServant({ ...(altria as any), skills }).unsupported).toContain('func:transformServant');
   });
 });
 
