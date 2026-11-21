@@ -27,6 +27,8 @@ const TARGET: Record<string, TargetKind> = {
 const BUFF_KIND: Record<string, EffectKind> = {
   upAtk: 'atkUp', upCommandall: 'cardUp', upNpdamage: 'npDmgUp',
   upDamage: 'powerUp', upDropnp: 'npGainUp', upChagetd: 'ocUp',
+  // Flat extra damage per hit-sequence, added after flooring (engine dmgPlus).
+  addDamage: 'dmgPlus',
 };
 // Functions we model. Only on allies.
 const FUNC_KIND: Record<string, EffectKind> = {
@@ -46,15 +48,31 @@ const IGNORED_BUFFS_ALLY = new Set([
   // Turns face cards into another type (Altria's Dragon's Core): face cards are
   // out of the model and the NP card itself is unchanged.
   'changeCommandCardType',
+  // Hit through enemy invincible/evade: enemies never act in our model, so they
+  // never have those buffs; it can only help.
+  'pierceInvincible', 'breakAvoidance',
+  // Damage cut / defence down on our side: survival only, enemies do not attack
+  // in the model.
+  'subSelfdamage', 'downDefence', 'downDefencecommandall',
+  // Adds a trait to our servant: we never read ally traits added at runtime,
+  // so at worst we miss a bonus that depends on it (conservative).
+  'addIndividuality',
 ]);
 // On enemies: only effects that help us (weaker / stunned / slower enemies).
 // Ignoring them under-estimates our damage, which is the prudent direction.
 const IGNORED_BUFFS_ENEMY = new Set([
   'downDefence', 'downDefencecommandall', 'donotAct', 'downAtk', 'downCriticalrate',
   'downCriticalpoint', 'downTolerance', 'downNpdamage',
+  // Seal skills / seal NP / damage-over-time (burn, poison, curse): weaker
+  // enemies; DoT is extra damage we do not count.
+  'donotSkill', 'donotNoble', 'reduceHp',
+  // Adds a trait to an enemy: we only miss supereffective/"vs trait" bonuses.
+  'addIndividuality',
 ]);
 const IGNORED_FUNCS_ALLY = new Set([
   'gainStar', 'gainHp', 'gainHpPer', 'none',
+  // Self HP loss that cannot kill (HP stops at 1): survival only.
+  'lossHpSafe',
   // hastenNpturn on an ally with team player/playerAndEnemy (team=enemy variants
   // are skipped earlier, they only run when an enemy casts the skill). Its only
   // possible effect is to raise a charge/gauge, never to lower it: helpful only.
@@ -63,8 +81,13 @@ const IGNORED_FUNCS_ALLY = new Set([
   'servantFriendshipUp', 'eventDropUp', 'eventPointUp', 'eventDropRateUp', 'eventPointRateUp',
   'expUp', 'qpUp', 'qpDropUp', 'userEquipExpUp',
 ]);
+// hastenNpturn on an enemy (team player/playerAndEnemy) fills its charge bar:
+// enemies are not simulated as attackers, so a charged enemy NP never changes
+// whether our NPs clear the wave.
 const IGNORED_FUNCS_ENEMY = new Set([
   'hastenNpturn', 'delayNpturn', 'absorbNpturn', 'instantDeath', 'gainHpFromTargets', 'subState', 'none',
+  // Drains the enemy charge bar (lossNp on an enemy is charge, not our gauge).
+  'lossNp',
 ]);
 // subState on an ally is safe only when it removes debuffs and nothing else.
 const NEGATIVE_BUFF_TRAIT = 3005; // buffNegativeEffect
@@ -201,7 +224,10 @@ function npOf(svt: any, unsupported: string[]): NoblePhantasm | null {
   const card = CARD_BY_ID[String(np.card)];
   if (!card) { unsupported.push('np:card:' + np.card); return null; }
   const se = dmg.funcType === 'damageNpIndividual';
-  if (dmg.funcType !== 'damageNp' && !se) unsupported.push('np:' + dmg.funcType);
+  // damageNpPierce = damageNp that ignores enemy DEF buffs. Enemy DEF buffs are
+  // not in the model (enemies do not act), so it computes exactly like damageNp.
+  const plainDmg = dmg.funcType === 'damageNp' || dmg.funcType === 'damageNpPierce';
+  if (!plainDmg && !se) unsupported.push('np:' + dmg.funcType);
   if (!plain(dmg)) unsupported.push('cond:' + dmg.funcType);
   const ocs: any[][] = [dmg.svals, ...OC_SVALS.map((k) => dmg[k])];
   if (ocs.some((oc) => oc.some((v) => (v.Rate ?? 1000) < 1000))) unsupported.push('np:rate');

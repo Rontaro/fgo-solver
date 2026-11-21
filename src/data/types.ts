@@ -4,8 +4,12 @@ export type TargetKind = 'self' | 'ptOne' | 'ptAll' | 'ptOther' | 'enemy' | 'ene
 
 export type EffectKind =
   | 'atkUp' | 'cardUp' | 'npDmgUp' | 'powerUp' | 'npGainUp' | 'ocUp'
-  | 'gainNp' | 'shortenSkill' | 'orderChange';
+  | 'gainNp' | 'shortenSkill' | 'orderChange'
+  | 'dmgPlus';             // flat damage (addDamage), added after flooring (engine dmgPlus)
 
+// value 0 = "not guaranteed at this level" (chance-based or a failed dependent
+// follow-up): the effect does nothing there. The solver must treat orderChange
+// and shortenSkill with value 0 as unavailable at that level.
 export interface LevelVal { value: number; turns: number; count: number; }
 
 export interface Effect {

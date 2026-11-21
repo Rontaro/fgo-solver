@@ -100,9 +100,29 @@ describe('convertFunctions', () => {
     expect(run([buff('invincible', 'enemy')]).unsupported).toEqual(['buff:invincible@enemy']);
     expect(run([buff('upDefence', 'enemyAll')]).unsupported).toEqual(['buff:upDefence@enemy']);
     expect(run([buff('downDefence', 'enemy')])).toEqual({ out: [], unsupported: [] });
-    expect(run([buff('downDefence', 'self')]).unsupported).toEqual(['buff:downDefence']);
     expect(run([buff('donotAct', 'self')]).unsupported).toEqual(['buff:donotAct']);
     expect(run([buff('upAtk', 'enemy')]).unsupported).toEqual(['buff:upAtk@enemy']);
+  });
+  const ignored = (f: any) => expect(run([f])).toEqual({ out: [], unsupported: [] });
+  it('only-helpful effects on allies are ignored', () => {
+    for (const t of ['pierceInvincible', 'breakAvoidance', 'subSelfdamage', 'downDefence',
+      'downDefencecommandall', 'addIndividuality']) ignored(buff(t, 'self'));
+    ignored(func('lossHpSafe', 'self'));
+  });
+  it('only-helpful effects on enemies are ignored', () => {
+    for (const t of ['reduceHp', 'donotSkill', 'donotNoble', 'addIndividuality']) ignored(buff(t, 'enemy'));
+    ignored(func('lossNp', 'enemyAll'));
+    // ...but the same effects on our side still block: they can hurt.
+    expect(run([buff('reduceHp', 'self')]).unsupported).toEqual(['buff:reduceHp']);
+    expect(run([buff('donotNoble', 'self')]).unsupported).toEqual(['buff:donotNoble']);
+  });
+  it('addDamage on an ally is modelled as dmgPlus, with its trait condition', () => {
+    const f = buff('addDamage', 'ptAll', { Value: 500 });
+    f.buffs[0].ckOpIndv = [{ id: 2002 }] as any;
+    expect(run([f]).out).toEqual([
+      { kind: 'dmgPlus', target: 'ptAll', lv: [{ value: 500, turns: 3, count: -1 }], opTraits: [2002] },
+    ]);
+    expect(run([buff('addDamage', 'enemy')]).unsupported).toEqual(['buff:addDamage@enemy']);
   });
   it('harmful functions on allies are unsupported', () => {
     expect(run([func('lossNp')]).unsupported).toEqual(['func:lossNp']);
@@ -127,6 +147,8 @@ describe('convertFunctions', () => {
     expect(run([buff('upAtk', 'self', { Rate: 500 }), follow]).out).toEqual([]);
     expect(run([func('gainNp', 'self', { Rate: -500 })]).out).toEqual([]);
     expect(run([follow]).out).toEqual([]); // nothing before it
+    // |Rate| < 1000 follow-up after a guaranteed function: still a chance, dropped.
+    expect(run([buff('upAtk'), func('gainNp', 'self', { Rate: -500 })]).out.map((e) => e.kind)).toEqual(['atkUp']);
   });
   it('extra conditions on a modelled effect are unsupported', () => {
     expect(run([buff('upAtk', 'self', {}, { functvals: [{ id: 1 }] })]).unsupported).toEqual(['cond:addStateShort']);
@@ -176,6 +198,15 @@ describe('compactServant NP selection', () => {
     const bad = compactServant({ ...(altria as any), noblePhantasms: nps });
     expect(bad.np).toBeNull();
     expect(bad.unsupported).toContain('np:card:9');
+  });
+  it('damageNpPierce computes like damageNp', () => {
+    const nps = (altria as any).noblePhantasms.map((n: any) => ({
+      ...n, functions: n.functions.map((f: any) => (f.funcType === 'damageNp' ? { ...f, funcType: 'damageNpPierce' } : f)),
+    }));
+    const s = compactServant({ ...(altria as any), noblePhantasms: nps });
+    expect(s.unsupported).toEqual([]);
+    expect(s.np!.mult[0][4]).toBe(6000);
+    expect(s.np!.seMult).toBeUndefined();
   });
   it('Siegfried: supereffective NP vs Dragon (2002), simulable', () => {
     const s = compactServant(siegfried as any);
