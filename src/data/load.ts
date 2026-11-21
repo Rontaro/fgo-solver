@@ -21,9 +21,10 @@ interface CachedData {
   quests: QuestWar[];
 }
 
-// Bumped when the compact format changes (2: face icons, quest spot names), so
+// Bumped when the compact format changes (2: face icons, quest spot names,
+// 3: servant rarity), so
 // data cached under the same Atlas hash is refetched.
-const SCHEMA = 2;
+const SCHEMA = 3;
 const cacheKey = (region: Region) => `data:v${SCHEMA}:${region}`;
 
 async function fetchJson<T>(region: Region, file: string, init?: RequestInit): Promise<T> {

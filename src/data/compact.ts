@@ -405,6 +405,7 @@ export function compactServant(svt: any, triggers?: TriggerLookup): CompactServa
     id: svt.id, collectionNo: svt.collectionNo, name: svt.name,
     face: faceOf(svt.extraAssets?.faces?.ascension),
     className: svt.className, attribute: svt.attribute, traits: svt.traits.map((t: any) => t.id),
+    rarity: svt.rarity ?? 0,
     atkGrowth: svt.atkGrowth,
     skills: skillsOf(svt.skills, unsupported, base),
     passives: svt.classPassive.flatMap((p: any) => convertFunctions(p.functions, unsupported, base)),

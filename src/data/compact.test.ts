@@ -28,6 +28,10 @@ describe('compactServant', () => {
     expect(s3.effects.find((e) => e.kind === 'cardUp')!.cards).toEqual(['arts']);
     expect(s3.effects.find((e) => e.kind === 'powerUp')!.opTraits).toEqual([1172]);
   });
+  it('keeps the Atlas rarity', () => {
+    expect(compactServant(castoria as any).rarity).toBe(5);
+    expect(compactServant({ ...(altria as any), rarity: 3 }).rarity).toBe(3);
+  });
   it('Castoria: append 2 (Load Magical Energy) is 20% at level 10', () => {
     const s = compactServant(castoria as any);
     expect(s.append2).toHaveLength(10);

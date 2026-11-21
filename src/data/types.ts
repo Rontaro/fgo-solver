@@ -42,6 +42,7 @@ export interface CompactServant {
   id: number; collectionNo: number; name: string;
   face: string;            // icon URL on the Atlas CDN ('' if none)
   className: string; attribute: string; traits: number[];
+  rarity: number;          // 0..5 stars (Atlas `rarity`)
   atkGrowth: number[];
   skills: Skill[];
   passives: Effect[];

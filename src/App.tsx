@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { RegionDataProvider, useRegionData } from './app/RegionData';
 import type { Region } from './data/types';
+import { CatalogPage } from './catalog/CatalogPage';
 import { RosterPage } from './roster/RosterPage';
 import { SolverPage } from './solverui/SolverPage';
 
-type Tab = 'roster' | 'solver';
+type Tab = 'roster' | 'catalog' | 'solver';
 const REGIONS: Region[] = ['NA', 'JP'];
 
 function Shell() {
@@ -29,6 +30,7 @@ function Shell() {
         </div>
         <nav className="mx-auto flex max-w-6xl px-4">
           <button className={tabCls('roster')} onClick={() => setTab('roster')}>Roster</button>
+          <button className={tabCls('catalog')} onClick={() => setTab('catalog')}>Catalogo</button>
           <button className={tabCls('solver')} onClick={() => setTab('solver')}>Solver</button>
         </nav>
       </header>
@@ -46,9 +48,7 @@ function Shell() {
           </div>
         )}
         {loading && <p className="text-zinc-400">Caricamento dati {region}…</p>}
-        {data && (tab === 'roster'
-          ? <RosterPage />
-          : <SolverPage />)}
+        {data && (tab === 'roster' ? <RosterPage /> : tab === 'catalog' ? <CatalogPage /> : <SolverPage />)}
       </main>
     </div>
   );

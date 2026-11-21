@@ -5,7 +5,7 @@ import { loadRegionData } from './load';
 
 const servant = (collectionNo: number, name: string) => ({
   id: collectionNo * 100, collectionNo, name, className: 'saber', attribute: 'earth', traits: [],
-  atkGrowth: [], skills: [], passives: [], append2: [], np: null, unsupported: [],
+  rarity: 5, atkGrowth: [], skills: [], passives: [], append2: [], np: null, unsupported: [],
 });
 
 function files(hash: string, names: string[]): Record<string, unknown> {
