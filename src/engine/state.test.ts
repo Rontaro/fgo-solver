@@ -246,8 +246,9 @@ describe('mods', () => {
       { kind: 'npDmgUp', value: 100, turns: 3, count: -1 },
       { kind: 'npGainUp', value: 300, turns: 3, count: -1 },
       { kind: 'ocUp', value: 1, turns: 1, count: 1 },
+      { kind: 'dmgPlus', value: 250, turns: 3, count: -1 },
     ];
-    expect(mods(u, enemy(), 'buster')).toMatchObject({ powerMod: 0, npDmgMod: 100, npGainMod: 300, ocUp: 1 });
+    expect(mods(u, enemy(), 'buster')).toMatchObject({ powerMod: 0, npDmgMod: 100, npGainMod: 300, ocUp: 1, dmgPlus: 250 });
     expect(mods(u, enemy({ traits: [1172, 9] }), 'buster')).toMatchObject({ powerMod: 500, npDmgMod: 300 });
   });
 });

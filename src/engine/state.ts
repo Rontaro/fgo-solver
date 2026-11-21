@@ -26,10 +26,9 @@ export interface Mods {
 
 // Buff kinds and the modifier each one adds to. The keys are exactly the
 // effect kinds that become Buffs; every other kind is an instant function.
-// TODO(dmgPlus): when EffectKind gains 'dmgPlus', add `dmgPlus: 'dmgPlus',` here.
 const MOD_FIELD: Partial<Record<EffectKind, keyof Mods>> = {
   atkUp: 'atkMod', cardUp: 'cardMod', npDmgUp: 'npDmgMod', powerUp: 'powerMod',
-  npGainUp: 'npGainMod', ocUp: 'ocUp',
+  npGainUp: 'npGainMod', ocUp: 'ocUp', dmgPlus: 'dmgPlus',
 };
 export const isBuffKind = (k: EffectKind): boolean => MOD_FIELD[k] !== undefined;
 
