@@ -116,6 +116,58 @@ describe('convertFunctions', () => {
     expect(run([buff('reduceHp', 'self')]).unsupported).toEqual(['buff:reduceHp']);
     expect(run([buff('donotNoble', 'self')]).unsupported).toEqual(['buff:donotNoble']);
   });
+  it('more only-helpful effects are ignored on their side only', () => {
+    for (const t of ['pierceDefence', 'downCriticalRateDamageTaken', 'downStarweight', 'upGrantInstantdeath',
+      'avoidInstantdeath', 'downTolerance', 'fieldIndividuality']) ignored(buff(t, 'self'));
+    for (const f of ['lossStar', 'displayBuffstring', 'cardReset', 'gainNpBuffIndividualSum', 'addFieldChangeToField']) {
+      ignored(func(f, 'self'));
+    }
+    for (const t of ['upFuncHpReduce', 'upNonresistInstantdeath', 'avoidState', 'downGainHp']) ignored(buff(t, 'enemy'));
+    ignored(func('displayBuffstring', 'enemy'));
+    expect(run([buff('upFuncHpReduce', 'self')]).unsupported).toEqual(['buff:upFuncHpReduce']);
+    expect(run([buff('downTolerance', 'enemy')])).toEqual({ out: [], unsupported: [] });
+  });
+  it('skill-triggering buffs stay unsupported (triggered skill not in the export)', () => {
+    for (const t of ['attackAfterFunction', 'commandattackAfterFunction', 'selfturnendFunction', 'damageFunction',
+      'gutsFunction', 'deadFunction', 'delayFunction']) {
+      expect(run([buff(t, 'self')]).unsupported).toEqual(['buff:' + t]);
+    }
+  });
+  it('subState removing only debuff families (poison/burn/curse) is ignored', () => {
+    ignored(func('subState', 'ptAll', {}, { traitVals: [{ id: 3011 }, { id: 3026 }, { id: 3015 }] }));
+    expect(run([func('subState', 'self', {}, { traitVals: [{ id: 3007 }] })]).unsupported).toEqual(['func:subState']);
+  });
+  it('ptOtherFull maps to ptOther (backline buff dropped: conservative)', () => {
+    expect(run([buff('upAtk', 'ptOtherFull')]).out[0].target).toBe('ptOther');
+  });
+  it('display-only sval keys are accepted', () => {
+    expect(run([buff('upAtk', 'self', { ShowQuestNoEffect: 1, HideMiss: 1, HideNoEffect: 1 })]).out).toHaveLength(1);
+    expect(run([buff('upAtk', 'self', { DisplayLastFuncInvalidType: 1 })]).unsupported).toEqual(['cond:addStateShort']);
+  });
+  it('random or player-chosen options (ActSet, ActSelectIndex) are not guaranteed', () => {
+    expect(run([buff('upAtk', 'self', { ActSet: 1, ActSetWeight: 20 })])).toEqual({ out: [], unsupported: [] });
+    expect(run([buff('upAtk', 'self', { ActSelectIndex: 0 })])).toEqual({ out: [], unsupported: [] });
+    // ...and a follow-up after them is not unconditional either.
+    expect(run([buff('upAtk', 'self', { ActSet: 1 }), func('gainNp', 'self', { Rate: -1000 })]).out).toEqual([]);
+  });
+  it('checkIndvType is accepted only with at most one trait per list', () => {
+    const one = buff('upDamage');
+    one.buffs[0].script = { checkIndvType: 1 } as any;
+    one.buffs[0].ckOpIndv = [{ id: 1 }] as any;
+    expect(run([one]).out[0].opTraits).toEqual([1]);
+    const two = buff('upDamage');
+    two.buffs[0].script = { checkIndvType: 1 } as any;
+    two.buffs[0].ckOpIndv = [{ id: 1 }, { id: 2 }] as any;
+    expect(run([two]).unsupported).toEqual(['cond:addStateShort']);
+  });
+  it('self functvals are accepted only when the servant always has the traits', () => {
+    const f = buff('upAtk', 'self', {}, { functvals: [{ id: 300 }] });
+    const traits = new Set([300, 1000]);
+    expect(run([f], { selfTraits: traits }).out).toHaveLength(1);
+    expect(run([f], { selfTraits: new Set([301]) }).unsupported).toEqual(['cond:addStateShort']);
+    const ally = buff('upAtk', 'ptOther', {}, { functvals: [{ id: 300 }] });
+    expect(run([ally], { selfTraits: traits }).unsupported).toEqual(['cond:addStateShort']);
+  });
   it('addDamage on an ally is modelled as dmgPlus, with its trait condition', () => {
     const f = buff('addDamage', 'ptAll', { Value: 500 });
     f.buffs[0].ckOpIndv = [{ id: 2002 }] as any;
