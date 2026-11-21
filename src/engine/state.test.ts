@@ -28,6 +28,9 @@ const team2 = () => start([cas(), member(shortener, 'short'), member(altria, 'al
 const unit = (s: BattleState, key: string): Unit => [...s.front, ...s.back].find((u) => u?.key === key)!;
 const enemy = (over: Partial<Enemy> = {}): Enemy =>
   ({ hp: 100000, className: 'assassin', attribute: 'human', traits: [], tdRate: 900, ...over });
+// endTurn requires a cleared wave.
+const clear = (s: BattleState): BattleState => ({ ...s, enemies: s.enemies.map((e) => ({ ...e, hp: 0 })) });
+const end = (s: BattleState): BattleState => endTurn(clear(s));
 const setGauge = (s: BattleState, key: string, gauge: number): BattleState =>
   ({ ...s, front: s.front.map((u) => (u && u.key === key ? { ...u, gauge } : u)) });
 
@@ -74,6 +77,13 @@ describe('initBattle', () => {
     const s = team();
     expect(s.aff.alt).toEqual(Array(3).fill({ classAtk: 1000, triangle: 1000, attribute: 1100 }));
     expect(s.aff.short[0]).toEqual({ classAtk: 900, triangle: 2000, attribute: 1000 }); // caster star vs assassin human
+  });
+  it('throws on duplicate keys, an empty quest and a bad fou', () => {
+    expect(() => start([member(altria, 'a'), member(siegfried, 'a')])).toThrow(/duplicate/);
+    expect(() => initBattle([member(altria, 'a')], mcCombat, 10, { waves: [] }, constants)).toThrow(/no waves/);
+    expect(() => start([member(altria, 'a', { fou: -1 })])).toThrow(/fou/);
+    expect(() => start([member(altria, 'a', { fou: Number.NaN })])).toThrow(/fou/);
+    expect(() => start([member(altria, 'a', { fou: Infinity })])).toThrow(/fou/);
   });
   it('throws on out-of-range levels', () => {
     expect(() => start([member(altria, 'a', { lv: 0 })])).toThrow(/lv/);
@@ -216,13 +226,13 @@ describe('endTurn', () => {
     let s = useSkill(team(), 'cas', 1);
     const hasAtk = (st: BattleState) => unit(st, 'alt').buffs.some((b) => b.kind === 'atkUp');
     expect(hasAtk(s)).toBe(true); // turn 1
-    s = endTurn(s);
+    s = end(s);
     expect(s.turn).toBe(2);
     expect(hasAtk(s)).toBe(true); // turn 2
-    s = endTurn(s);
+    s = end(s);
     expect(hasAtk(s)).toBe(true); // turn 3
     expect(unit(s, 'alt').buffs.find((b) => b.kind === 'atkUp')!.turns).toBe(1);
-    s = endTurn(s);
+    s = end(s);
     expect(hasAtk(s)).toBe(false); // turn 4
     expect(unit(s, 'cas').cd).toEqual([3, 0, 0]);
     expect(s.turn).toBe(4);
@@ -233,7 +243,7 @@ describe('endTurn', () => {
     let s = useSkill(team(), 'alt', 1);
     s = useMc(s, 2, mcCombat, 10, undefined, [1, 0]);
     const frozen = unit(s, 'alt');
-    s = endTurn(endTurn(s));
+    s = end(end(s));
     expect(s.back[0]).toBe(frozen);
     expect(unit(s, 'alt').cd).toEqual([5, 0, 0]);
     expect(unit(s, 'alt').buffs).toContainEqual({ kind: 'atkUp', value: 180, turns: 3, count: -1 });
@@ -242,14 +252,20 @@ describe('endTurn', () => {
   });
   it('MC cooldowns tick down too, minimum 0; state is not mutated', () => {
     const s0 = useMc(team(), 0, mcCombat, 10);
-    const s = endTurn(s0);
+    const s = end(s0);
     expect(s.mcCd).toEqual([9, 0, 0]);
     expect(s0.mcCd).toEqual([10, 0, 0]);
     expect(s0.turn).toBe(1);
   });
+  it('throws while any enemy is alive', () => {
+    expect(() => endTurn(team())).toThrow('endTurn with living enemies');
+    const s = team();
+    expect(() => endTurn({ ...s, enemies: [...clear(s).enemies.slice(1), s.enemies[0]] })).toThrow('endTurn with living enemies');
+    expect(endTurn(clear(s)).turn).toBe(2);
+  });
   it('units with nothing to tick are shared', () => {
     const s0 = team();
-    expect(endTurn(s0).front[1]).toBe(s0.front[1]);
+    expect(end(s0).front[1]).toBe(s0.front[1]);
   });
 });
 
@@ -289,9 +305,11 @@ describe('mods', () => {
   });
 });
 
+const env = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env ?? {};
+
 describe('benchmark', () => {
-  it('100k useSkill + endTurn cycles', () => {
-    const s0 = team();
+  it.skipIf(!env.BENCH)('100k useSkill + endTurn cycles (BENCH=1)', () => {
+    const s0 = clear(team());
     const t0 = performance.now();
     let n = 0;
     for (let i = 0; i < 100_000; i++) {

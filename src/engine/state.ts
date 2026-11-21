@@ -146,12 +146,19 @@ const inRange = (v: number, lo: number, hi: number, what: string) => {
 
 export function initBattle(members: readonly TeamMember[], mc: CompactMC, mcLv: number, quest: Quest, constants: Constants): BattleState {
   inRange(mcLv, 1, 10, 'mcLv');
+  if (quest.waves.length === 0) throw new Error('quest has no waves');
+  const keys = new Set<string>();
+  for (const m of members) {
+    if (keys.has(m.key)) throw new Error(`duplicate member key: ${m.key}`);
+    keys.add(m.key);
+  }
   const units = members.map((m): Unit => {
     const what = (f: string) => `${m.key}.${f}`;
     inRange(m.lv, 1, m.svt.atkGrowth.length, what('lv'));
     inRange(m.npLv, 1, 5, what('npLv'));
     m.skillLv.forEach((l, i) => inRange(l, 1, 10, what(`skillLv[${i}]`)));
     inRange(m.append2Lv, 0, m.svt.append2.length, what('append2Lv'));
+    if (!Number.isFinite(m.fou) || m.fou < 0) throw new Error(`${what('fou')} must be a finite number >= 0: ${m.fou}`);
     if (m.ce) inRange(m.ceLv, 1, m.ce.atkGrowth.length, what('ceLv'));
 
     const buffs: Buff[] = [];
@@ -244,9 +251,12 @@ function tick(u: Unit): Unit {
 /**
  * End of turn. Buff turns and skill cooldowns tick on the front line only
  * (in-game, back-line servants are frozen). A buff with turns N applied in
- * turn T is active for the NPs of turns T..T+N-1.
+ * turn T is active for the NPs of turns T..T+N-1. Throws if any enemy is alive.
  */
 export function endTurn(state: BattleState): BattleState {
+  // The model assumes every wave dies on the turn it appears (enemies never
+  // act); the enemy allow-list in quest.ts relies on it.
+  if (state.enemies.some((e) => e.hp > 0)) throw new Error('endTurn with living enemies');
   return {
     ...state,
     front: state.front.map((u) => (u ? tick(u) : null)),
