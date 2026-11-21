@@ -450,3 +450,50 @@ describe('solve: enemy defence', () => {
     expect(run(team, mcCombat, tough).stats.npFires).toBe(0);
   });
 });
+
+describe('solve: fuzz regressions against brute force', () => {
+  // Generator of the Task 20 review fuzz (same draws, same order), replayed up
+  // to the failing case. Before the memo kept the best action count per key
+  // (and the turn start inside the last turn), these found one action more.
+  function fuzzCase(seed0: number, target: number, maxE: number, layoutsOn: boolean) {
+    let seed = seed0;
+    const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+    const pick = <T,>(xs: readonly T[]) => xs[Math.floor(rnd() * xs.length)];
+    const randLayout = (n: number, first: boolean) => {
+      const slots = 1 + Math.floor(rnd() * 3);
+      const field: number[] = Array(slots).fill(-1);
+      let i = 0;
+      for (let s = 0; s < slots && i < n; s++) { if (!first && rnd() < 0.25 && s > 0) continue; field[s] = i++; }
+      const reserve: number[] = []; for (; i < n; i++) reserve.push(i);
+      let refill = Array.from({ length: slots }, (_, s) => s);
+      for (let k = refill.length - 1; k > 0; k--) { const j = Math.floor(rnd() * (k + 1)); [refill[k], refill[j]] = [refill[j], refill[k]]; }
+      if (refill.length > 1 && rnd() < 0.4) refill = refill.slice(0, 1 + Math.floor(rnd() * (refill.length - 1)));
+      if (first) for (const s of refill) if (field[s] < 0 && reserve.length) field[s] = reserve.splice(0, 1)[0];
+      return { field, reserve, refill };
+    };
+    const svt = (id: number, aoe: boolean, g: number): CompactServant => ({
+      ...altria, id, name: 'R' + id, passives: [],
+      np: { ...altria.np!, aoe, extra: rnd() < 0.3 ? [eff('gainNp', 'ptOther', 2000)] : [] },
+      skills: [skill(1, pick([3, 5, 7]), eff('gainNp', pick(['self', 'ptOne', 'ptAll'] as TargetKind[]), g)),
+        skill(2, 5, eff(pick(['atkUp', 'npDmgUp'] as EffectKind[]), 'ptAll', pick([200, 500]), 3))],
+    });
+    for (let c = 0; ; c++) {
+      const team = Array.from({ length: 3 }, (_, i) => member(svt(9700 + c * 10 + i, rnd() < 0.5, pick([5000, 10000])), 'u' + i,
+        { npLv: pick([1, 5]), ...(i === 0 && { ce: kaleidoscope, ceLv: 100, ceMlb: true }) }));
+      const nw = 1 + Math.floor(rnd() * 2);
+      const hpBase = pick([3000, 8000, 15000, 25000]);
+      const waves = Array.from({ length: nw }, () => Array.from({ length: 1 + Math.floor(rnd() * maxE) },
+        () => ({ ...enemy(Math.floor(hpBase * (0.3 + rnd()))), tdRate: 1000 })));
+      const layouts = waves.map((w, wi) => randLayout(w.length, wi === 0));
+      if (c === target) return { team, q: (layoutsOn ? { waves, layouts } : { waves }) as Quest };
+    }
+  }
+  const mcF: CompactMC = { id: 9, name: 'm', unsupported: [], skills: [{ num: 1, cooldown: Array(10).fill(5), effects: [eff('atkUp', 'ptAll', 200, 1)] }] };
+  for (const [seed, c, maxE, lay] of [[777, 28, 5, false], [57, 81, 6, true], [5678, 94, 6, true], [3, 97, 7, true]] as const) {
+    it(`seed ${seed} case ${c}`, () => {
+      const { team, q } = fuzzCase(seed, c, maxE, lay);
+      const b = againstBrute(team, q, mcF);
+      expect(run(team, mcF, q, { prune: false }).solutions[0]?.actions ?? Infinity).toBe(b);
+    });
+  }
+});

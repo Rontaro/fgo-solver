@@ -355,20 +355,32 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
   };
 
   /*
-   * Memo notes. A hit skips the subtree: its Partials were recorded on the
-   * first visit and its solutions found then. Equal states have used the same
-   * skills (up to identical builds: a used skill keeps a cooldown > 0 in the
-   * hash), so the skipped line had the same action count so far. At memoCap
-   * the map is cleared, which only costs re-exploration; `seen` deduplicates
-   * the solutions. The memo lives for one solve() call.
+   * Memo notes. key -> fewest skill/MC actions of a line that reached it. A
+   * hit skips the subtree only when the line now arriving has at least as
+   * many actions: its Partials were recorded on the first visit and its
+   * solutions found then, with fewer or equal actions. A cheaper line
+   * re-explores it. The hash does not pin the action count: cooldowns are
+   * capped at the end of the quest, so lines that used different skills can
+   * reach the same key. On the last turn every relevant skill is forced and
+   * the solution is then reduced to the exact minimum from the turn start
+   * (exactLastTurn), so what a node inside that turn is worth depends on the
+   * turn start, not only on the node: keys inside the last turn carry the
+   * turn start (lastKey).
+   * At memoCap the map is cleared, which only costs re-exploration; `seen`
+   * deduplicates the solutions. The memo lives for one solve() call.
    */
-  const memo = new Map<string, true>();
+  const memo = new Map<string, number>();
+  /** Skill/MC steps on the current path (NPs excluded). */
+  let acts = 0;
   const visit = (key: string): boolean => {
-    if (memo.has(key)) { stats.memoHits++; return false; }
-    if (memo.size >= memoCap) memo.clear();
-    memo.set(key, true);
+    const m = memo.get(key);
+    if (m !== undefined && m <= acts) { stats.memoHits++; return false; }
+    if (m === undefined && memo.size >= memoCap) memo.clear();
+    memo.set(key, acts);
     return true;
   };
+  /** Prefix for memo keys inside a turn: the turn start on the last turn (see the memo notes). */
+  const lastKey = (s: BattleState) => (s.wave === lastWave ? stateHash(turnStarts[turnStarts.length - 1], true) + '#' : '');
   const tick = () => {
     if (++stats.nodes % CHECK_EVERY === 0 && (performance.now() > deadline || opts.cancel?.cancelled)) {
       stop = true; exhausted = false;
@@ -509,14 +521,14 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
   /** Swapping turn: use/skip over the outgoing unit's skills k..3, then the swap, then the full recursion. */
   function outNode(s: BattleState, fi: number, bi: number, k: number): void {
     if (tick()) return;
-    if (!visit(`O${fi}${bi}${k}${stateHash(s, false)}`)) return;
+    if (!visit(`${lastKey(s)}O${fi}${bi}${k}${stateHash(s, false)}`)) return;
     const last = s.wave === lastWave;
     if (k === 4) {
       for (const o of swapOptions(s, fi, bi, last)) {
         if (boundFails(o.state)) continue;
-        cur().push(o.step);
+        cur().push(o.step); acts++;
         moveNode(o.state, 0);
-        cur().pop();
+        cur().pop(); acts--;
         if (stop) return;
       }
       return;
@@ -531,15 +543,15 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
     if (!(last && options.length)) next(s);
     for (const o of options) {
       if (stop) return;
-      cur().push(o.step);
+      cur().push(o.step); acts++;
       next(o.state);
-      cur().pop();
+      cur().pop(); acts--;
     }
   }
 
   function moveNode(s: BattleState, pos: number, order = orderFor(s)): void {
     if (tick()) return;
-    if (!visit(`M${pos}|${stateHash(s, pos === 0)}`)) return;
+    if (!visit(`${pos === 0 ? '' : lastKey(s)}M${pos}|${stateHash(s, pos === 0)}`)) return;
     if (pos === order.length) {
       if (prune && s.wave !== lastWave && wastedCharge(s)) { stats.delayPrunes++; return; }
       firePhase(s);
@@ -631,7 +643,7 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
   }
 
   function firePhase(s: BattleState): void {
-    if (!visit(`F${stateHash(s, true)}`)) return;
+    if (!visit(`${lastKey(s)}F${stateHash(s, true)}`)) return;
     const shooters = s.front.filter((u): u is Unit => !!u && u.svt.np !== null);
     if (!shooters.some((u) => u.gauge >= 10000)) {
       const short = shooters.length ? Math.min(...shooters.map((u) => 10000 - u.gauge)) : 10000;
@@ -876,7 +888,9 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
     // exact minimum (exactLastTurn tries every target and NP sequence). A few
     // more are kept as alternatives, the rest skipped.
     const sw = raw[raw.length - 1].find((x) => x.swap);
-    const startKey = stateHash(turnStarts[turnStarts.length - 1], true) + (sw ? stepKey(sw) : '-');
+    // Per action count before the last turn too: a cheaper prefix to the same start gets its own lines.
+    const lastActs = raw[raw.length - 1].filter((x) => x.kind !== 'np').length;
+    const startKey = `${acts - lastActs}|${stateHash(turnStarts[turnStarts.length - 1], true)}${sw ? stepKey(sw) : '-'}`;
     const nth = linesPerStart.get(startKey) ?? 0;
     linesPerStart.set(startKey, nth + 1);
     if (nth >= LINES_PER_START) { stats.skippedLines++; return; }
