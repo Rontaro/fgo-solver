@@ -27,21 +27,38 @@ export function defaultMc(mcs: CompactMC[]): CompactMC | undefined {
   return mcs.find((m) => m.name === 'Chaldea Combat Uniform') ?? mcs.find((m) => m.id === 20) ?? mcs[0];
 }
 
-/** One line per turn, e.g. "T1: A S1 → B · MC 2 · NP A". front/back are the starting unit keys. */
-export function formatTurns(turns: Step[][], front: (string | null)[], back: (string | null)[],
-  name: (key: string | undefined) => string, mc: CompactMC | undefined): string[] {
+/** One rendered step of a turn; unit keys refer to TeamMember.key. */
+export type TurnItem =
+  | { kind: 'skill'; unit: string | undefined; num: number; target?: string }
+  | { kind: 'mc'; num: number; name?: string; target?: string }
+  | { kind: 'swap'; out: string | undefined; inn: string | undefined }
+  | { kind: 'np'; unit: string | undefined; targetIndex?: number };
+
+/** Steps per turn, resolving order changes to the units swapped. front/back are the starting unit keys. */
+export function describeTurns(turns: Step[][], front: (string | null)[], back: (string | null)[], mc: CompactMC | undefined): TurnItem[][] {
   const f = front.slice(), b = back.slice();
-  return turns.map((steps, t) => `T${t + 1}: ` + steps.map((s) => {
-    const to = s.target ? ` → ${name(s.target)}` : '';
-    if (s.kind === 'np') return `NP ${name(s.unit)}`;
-    if (s.kind === 'skill') return `${name(s.unit)} S${s.num}${to}`;
+  return turns.map((steps) => steps.map((s): TurnItem => {
+    if (s.kind === 'np') return { kind: 'np', unit: s.unit, ...(s.targetIndex !== undefined && { targetIndex: s.targetIndex }) };
+    if (s.kind === 'skill') return { kind: 'skill', unit: s.unit, num: s.num ?? 1, ...(s.target && { target: s.target }) };
     if (s.swap) {
       const [i, j] = s.swap;
       const out = f[i], inn = b[j];
       f[i] = inn; b[j] = out;
-      return `Order change: ${name(out ?? undefined)} ↔ ${name(inn ?? undefined)}`;
+      return { kind: 'swap', out: out ?? undefined, inn: inn ?? undefined };
     }
-    const skillName = (mc?.skills[(s.num ?? 1) - 1] as { name?: string } | undefined)?.name;
-    return `${skillName ?? `MC ${s.num}`}${to}`;
+    const name = (mc?.skills[(s.num ?? 1) - 1] as { name?: string } | undefined)?.name;
+    return { kind: 'mc', num: s.num ?? 1, ...(name && { name }), ...(s.target && { target: s.target }) };
+  }));
+}
+
+/** One line per turn, e.g. "T1: A S1 → B · MC 2 · NP A". front/back are the starting unit keys. */
+export function formatTurns(turns: Step[][], front: (string | null)[], back: (string | null)[],
+  name: (key: string | undefined) => string, mc: CompactMC | undefined): string[] {
+  return describeTurns(turns, front, back, mc).map((items, t) => `T${t + 1}: ` + items.map((s) => {
+    const to = 'target' in s && s.target ? ` → ${name(s.target)}` : '';
+    if (s.kind === 'np') return `NP ${name(s.unit)}`;
+    if (s.kind === 'skill') return `${name(s.unit)} S${s.num}${to}`;
+    if (s.kind === 'swap') return `Order change: ${name(s.out)} ↔ ${name(s.inn)}`;
+    return `${s.name ?? `MC ${s.num}`}${to}`;
   }).join(' · '));
 }

@@ -7,9 +7,11 @@ import type { OwnedServant } from '../roster/types';
 import { compareSolutions, type Partial, type Solution, type SolveStats } from '../solver/solve';
 import type { Slot } from '../solver/autocomplete';
 import type { InMsg, OutMsg, Progress } from '../solver/worker-handler';
-import { defaultMc, formatTurns, ownedToMember, supportMember, SUPPORT_POOL_CAP, type CeChoice } from './members';
+import { defaultMc, describeTurns, formatTurns, ownedToMember, supportMember, SUPPORT_POOL_CAP, type CeChoice } from './members';
 import { QuestPicker, type PickedQuest } from './QuestPicker';
 import { emptySlot, TeamBuilder, type SlotState } from './TeamBuilder';
+import { MarginBars, TurnSteps } from './TurnSteps';
+import { FaceIcon } from '../app/ServantIcon';
 import { toFgaCommand } from '../fga/command';
 import { toFgaConfig } from '../fga/config';
 
@@ -35,6 +37,7 @@ export function SolverPage() {
   const [exhausted, setExhausted] = useState<boolean | null>(null);
   const [error, setError] = useState<{ message: string; reasons?: readonly string[] } | null>(null);
   const [run, setRun] = useState<Run | null>(null);
+  const [showText, setShowText] = useState(false);
   const worker = useRef<Worker | null>(null);
   const jobId = useRef(0);
   const members = useRef(new Map<string, TeamMember>());
@@ -72,6 +75,7 @@ export function SolverPage() {
     : null;
 
   const name = (k: string | undefined) => (k ? members.current.get(k)?.svt.name ?? k : '?');
+  const unit = (k: string | undefined) => (k ? members.current.get(k) : undefined);
 
   const start = () => {
     if (problem || !quest || !mc) return;
@@ -182,17 +186,32 @@ export function SolverPage() {
               : `Arrivato alla wave ${best.wave}: NP non carico.`) : ''}
           </p>
         )}
+        {run && sorted.length > 0 && (
+          <label className="flex items-center gap-2 text-xs text-zinc-400">
+            <input type="checkbox" checked={showText} onChange={(e) => setShowText(e.target.checked)} /> mostra testo
+          </label>
+        )}
         {run && sorted.map((f, i) => {
           const tk = f.team ?? [...run.front, ...run.back];
           const front = f.team ? tk.slice(0, 3) : run.front, back = f.team ? tk.slice(3) : run.back;
           return (
             <div key={i} className="space-y-1 rounded bg-zinc-800 p-3 text-sm">
-              <div className="flex flex-wrap justify-between gap-2 text-xs text-zinc-400">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-zinc-400">
                 <span>{f.solution.actions} azioni{f.solution.usesSwap ? ' · order change' : ''}</span>
-                <span>Margini: {f.solution.margins.map((m) => `${Math.round(m * 100)}%`).join(' / ')}</span>
+                <MarginBars margins={f.solution.margins} />
               </div>
-              {f.team && <p className="text-sky-300">Squadra: {f.team.map(name).join(', ')}</p>}
-              {formatTurns(f.solution.turns, front, back, name, run.mc).map((l, j) => <p key={j}>{l}</p>)}
+              {f.team && (
+                <div className="flex flex-wrap items-center gap-1.5 text-sky-300">
+                  <span className="text-xs">Squadra:</span>
+                  {f.team.map((k) => <FaceIcon key={k} face={unit(k)?.svt.face} name={name(k)} size={28} />)}
+                </div>
+              )}
+              <TurnSteps turns={describeTurns(f.solution.turns, front, back, run.mc)} unit={unit} />
+              {showText && (
+                <div className="border-t border-zinc-700 pt-1 text-xs text-zinc-300">
+                  {formatTurns(f.solution.turns, front, back, name, run.mc).map((l, j) => <p key={j}>{l}</p>)}
+                </div>
+              )}
               {FGA && (
                 <div className="pt-1">
                   <div className="flex flex-wrap gap-2">
