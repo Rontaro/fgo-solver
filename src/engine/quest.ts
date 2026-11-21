@@ -11,6 +11,7 @@ export interface RawEnemy {
   svt: { className: string; attribute: string };
   traits: readonly { id: number }[];
   serverMod: { tdRate: number };
+  /** Active skills: never used (enemies never act), not checked. */
   skills?: { skill1?: RawSkill | null; skill2?: RawSkill | null; skill3?: RawSkill | null };
   classPassive?: { classPassive?: readonly RawSkill[]; addPassive?: readonly RawSkill[] };
 }
@@ -30,11 +31,15 @@ export class UnsupportedQuestError extends Error {
 }
 
 /*
- * Enemy-side effects. Only effects an enemy puts on its own side can matter:
- * in a 3-wave / 3-turn clear every wave dies on the turn it appears, so enemies
- * never act; their NP and the parts of their skills that target our side never
- * fire. Passives apply on entry, so anything a passive puts on our side is
- * rejected. Skills on their own side are checked too (conservative).
+ * Enemy-side effects. In a 3-wave / 3-turn clear every wave dies on the turn
+ * it appears (endTurn throws otherwise), so enemies never take a turn: their
+ * active skills and NP never fire and are not checked at all. Only what is in
+ * effect when they enter can matter: the class passives and added passives
+ * (Chaldea's initActorSkills runs them at wave start, for the field and the
+ * reserve alike). The trigger buffs a passive can install (entry, wave start,
+ * on-damage, on-death functions...) are buff types too, outside the
+ * allow-list, so they are rejected. Anything a passive puts on our side is
+ * rejected.
  *
  * Allow-list of buffs an enemy may hold on itself without changing whether our
  * NP kills it or how much NP we gain: debuff resist / immunity (we never debuff
@@ -54,13 +59,13 @@ const ENEMY_SELF_FUNCS_OK = new Set(['none', 'gainStar', 'gainNp', 'hastenNpturn
 const OWN_SIDE = new Set(['self', 'ptAll', 'ptOne', 'ptOther', 'ptFull', 'ptAnother', 'ptRandom', 'ptOneOther']);
 const OTHER_SIDE = /^enemy/;
 
-function checkFuncs(where: string, funcs: readonly RawFunc[], passive: boolean, out: string[]): void {
+function checkPassive(where: string, funcs: readonly RawFunc[], out: string[]): void {
   for (const f of funcs) {
     // team 'player': only runs when a player-side unit casts it.
     if (f.funcTargetTeam === 'player') continue;
     if (OTHER_SIDE.test(f.funcTargetType)) {
-      if (passive && f.funcType !== 'none') out.push(`${where}: ${f.funcType} on our side`);
-      continue; // skills on our side never fire (enemies never act)
+      if (f.funcType !== 'none') out.push(`${where}: ${f.funcType} on our side`);
+      continue;
     }
     if (!OWN_SIDE.has(f.funcTargetType)) { out.push(`${where}: target ${f.funcTargetType}`); continue; }
     if (f.funcType === 'addState' || f.funcType === 'addStateShort') {
@@ -72,7 +77,7 @@ function checkFuncs(where: string, funcs: readonly RawFunc[], passive: boolean, 
 
 /**
  * Atlas quest phase -> engine quest. Throws UnsupportedQuestError (with every
- * reason) for reinforcements, shift/call/change decks and enemy self-buffs
+ * reason) for reinforcements, shift/call/change decks and enemy passives
  * that could reduce our damage or keep an enemy alive.
  */
 export function questFromAtlas(raw: RawQuest): Quest {
@@ -90,10 +95,7 @@ export function questFromAtlas(raw: RawQuest): Quest {
     for (const e of onField) {
       const where = `${w} ${e.name}`;
       for (const p of [...(e.classPassive?.classPassive ?? []), ...(e.classPassive?.addPassive ?? [])]) {
-        checkFuncs(`${where} passive ${p.name ?? ''}`.trim(), p.functions, true, reasons);
-      }
-      for (const s of [e.skills?.skill1, e.skills?.skill2, e.skills?.skill3]) {
-        if (s) checkFuncs(`${where} skill ${s.name ?? ''}`.trim(), s.functions, false, reasons);
+        checkPassive(`${where} passive ${p.name ?? ''}`.trim(), p.functions, reasons);
       }
     }
     return [...onField].sort((a, b) => a.deckId - b.deckId).map((e): Enemy => ({

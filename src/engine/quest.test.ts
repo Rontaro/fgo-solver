@@ -62,21 +62,26 @@ describe('questFromAtlas', () => {
     for (const t of bad) expect(r).toContainEqual(expect.stringContaining(`buff ${t}`));
     expect(() => questFromAtlas(q)).toThrow(UnsupportedQuestError);
   });
-  it('rejects a skill that buffs its own side with defence', () => {
-    const skills = { skill1: { name: 'Wall', functions: [{ funcType: 'addStateShort', funcTargetType: 'ptAll', buffs: [{ type: 'upDefence' }] }] } };
-    expect(reasons(quest({ enemies: [mk({ skills })] }))).toEqual(['wave 1 Oprichnik A skill Wall: buff upDefence']);
+  it('ignores active skills entirely: enemies never act', () => {
+    // Shape of a real NA Valentine wave 3: defence / invincible and trigger buffs on skills.
+    const fn = (funcTargetType: string, type: string) => ({ funcType: 'addStateShort', funcTargetType, buffs: [{ type }] });
+    const skills = {
+      skill1: { name: 'Natural Body (Figure) C', functions: [fn('self', 'upDefence'), fn('self', 'invincible')] },
+      skill2: { name: 'Dance of the Seven Veils A', functions: [fn('ptAll', 'selfturnendFunction'), fn('self', 'delayFunction')] },
+      skill3: { name: 'X', functions: [{ funcType: 'addFieldChangeToField', funcTargetType: 'self' }, fn('enemyAll', 'downAtk')] },
+    };
+    expect(reasons(quest({}, {}, { enemies: [mk({ skills }), mk({ deckId: 2, skills })] }))).toEqual([]);
   });
-  it('rejects a passive aimed at our side, ignores skills aimed at our side', () => {
+  it('rejects a passive aimed at our side or with a trigger buff', () => {
     expect(reasons(quest({ enemies: [mk({ classPassive: passive('downAtk', 'enemyAll') })] }))[0]).toMatch(/on our side/);
-    const skills = { skill1: { functions: [{ funcType: 'addState', funcTargetType: 'enemy', buffs: [{ type: 'downAtk' }] }] } };
-    expect(reasons(quest({ enemies: [mk({ skills })] }))).toEqual([]);
+    expect(reasons(quest({ enemies: [mk({ classPassive: passive('entryFunction') })] }))[0]).toMatch(/buff entryFunction/);
   });
   it('allows harmless enemy self-buffs (attack, crit, debuff resist, regen)', () => {
     const ok = ['upAtk', 'upCriticaldamage', 'upTolerance', 'regainHp', 'upHate'];
     expect(reasons(quest({ enemies: [mk({ classPassive: passive(ok) })] }))).toEqual([]);
   });
-  it('rejects unknown non-buff functions on its own side', () => {
-    const skills = { skill1: { name: 'X', functions: [{ funcType: 'addFieldChangeToField', funcTargetType: 'self' }] } };
-    expect(reasons(quest({ enemies: [mk({ skills })] }))[0]).toMatch(/addFieldChangeToField/);
+  it('rejects unknown non-buff functions in a passive', () => {
+    const classPassive = { classPassive: [{ name: 'X', functions: [{ funcType: 'addFieldChangeToField', funcTargetType: 'self' }] }], addPassive: [] };
+    expect(reasons(quest({ enemies: [mk({ classPassive })] }))[0]).toMatch(/addFieldChangeToField/);
   });
 });
