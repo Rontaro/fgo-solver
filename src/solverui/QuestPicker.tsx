@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import type { QuestWar, Region } from '../data/types';
 import { questFromAtlas, UnsupportedQuestError, type RawQuest } from '../engine/quest';
+import { loadFavs, loadRecent, pushRecent, saveFavs, saveRecent, type RecentNode } from './questPrefs';
+import { lastPhase, questIndex, searchQuests, type QuestItem } from './questSearch';
 
 export interface PickedQuest { raw: RawQuest; label: string; unsupported: readonly string[] | null }
 
@@ -19,22 +21,56 @@ function fetchQuest(region: Region, id: number, phase: number): Promise<RawQuest
   return p;
 }
 
-const sel = 'w-full rounded border border-zinc-700 bg-zinc-800 px-2 py-1 text-sm';
+const inp = 'w-full rounded border border-zinc-700 bg-zinc-800 px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-sky-500';
+const MAX_RESULTS = 30;
+
+function TypeBadge({ type }: { type: string }) {
+  const free = type === 'free';
+  return (
+    <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${free ? 'bg-sky-900/60 text-sky-300' : 'bg-amber-900/60 text-amber-300'}`}>
+      {free ? 'free' : 'event'}
+    </span>
+  );
+}
+
+function Star({ on, onToggle, name, tabIndex }: { on: boolean; onToggle: () => void; name: string; tabIndex?: number }) {
+  return (
+    <button type="button" tabIndex={tabIndex} aria-pressed={on}
+      aria-label={on ? `Rimuovi ${name} dai preferiti` : `Aggiungi ${name} ai preferiti`}
+      title={on ? 'Rimuovi dai preferiti' : 'Aggiungi ai preferiti'}
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={(e) => { e.stopPropagation(); onToggle(); }}
+      className={`shrink-0 rounded px-1 text-base leading-none ${on ? 'text-amber-400' : 'text-zinc-600 hover:text-zinc-300'}`}>
+      {on ? '★' : '☆'}
+    </button>
+  );
+}
+
+const where = (it: QuestItem) => it.war.warName + (it.quest.spot ? ` · ${it.quest.spot}` : '');
 
 export function QuestPicker({ region, wars, onChange }: { region: Region; wars: QuestWar[]; onChange: (q: PickedQuest | null) => void }) {
-  const [filter, setFilter] = useState('');
-  const [warId, setWarId] = useState<number | null>(null);
-  const [questId, setQuestId] = useState<number | null>(null);
-  const [phase, setPhase] = useState<number | null>(null);
+  const [query, setQuery] = useState('');
+  const [active, setActive] = useState(0);
+  const [sel, setSel] = useState<RecentNode | null>(null);
+  const [recent, setRecent] = useState<RecentNode[]>(() => loadRecent(region));
+  const [favs, setFavs] = useState<number[]>(() => loadFavs(region));
   const [picked, setPicked] = useState<PickedQuest | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const listId = useId();
 
-  const f = filter.trim().toLowerCase();
-  const shownWars = useMemo(() => wars.filter((w) => !f || w.warName.toLowerCase().includes(f)
-    || w.quests.some((q) => q.name.toLowerCase().includes(f))), [wars, f]);
-  const war = wars.find((w) => w.warId === warId) ?? null;
-  const quests = war ? war.quests.filter((q) => !f || war.warName.toLowerCase().includes(f) || q.name.toLowerCase().includes(f)) : [];
-  const quest = war?.quests.find((q) => q.id === questId) ?? null;
+  const index = useMemo(() => questIndex(wars), [wars]);
+  const byId = useMemo(() => new Map(index.map((it) => [it.quest.id, it])), [index]);
+  const results = useMemo(() => searchQuests(index, query, MAX_RESULTS), [index, query]);
+  const item = sel ? byId.get(sel.id) ?? null : null;
+  const quest = item?.quest ?? null;
+  const phase = sel?.phase ?? null;
+
+  useEffect(() => {
+    setSel(null); setQuery(''); setRecent(loadRecent(region)); setFavs(loadFavs(region));
+  }, [region]);
+  useEffect(() => {
+    document.getElementById(`${listId}-${active}`)?.scrollIntoView({ block: 'nearest' });
+  }, [active, listId]);
 
   useEffect(() => {
     setPicked(null); setErr(null); onChange(null);
@@ -53,26 +89,98 @@ export function QuestPicker({ region, wars, onChange }: { region: Region; wars: 
     return () => { alive = false; };
   }, [region, quest, phase]);
 
+  /** Selects a quest at `ph` (when valid) or its last phase, and records it as recent. */
+  const choose = (it: QuestItem, ph?: number) => {
+    const p = ph !== undefined && it.quest.phases.includes(ph) ? ph : lastPhase(it.quest);
+    if (p === null) return;
+    const node = { id: it.quest.id, phase: p };
+    setSel(node); setQuery(''); setActive(0);
+    const next = pushRecent(recent, node);
+    setRecent(next); saveRecent(region, next);
+  };
+  const toggleFav = (id: number) => {
+    const next = favs.includes(id) ? favs.filter((x) => x !== id) : [...favs, id];
+    setFavs(next); saveFavs(region, next);
+  };
+
+  const favItems = favs.flatMap((id) => { const it = byId.get(id); return it ? [it] : []; });
+  const recentItems = recent.flatMap((r) => { const it = byId.get(r.id); return it ? [{ it, phase: r.phase }] : []; });
+  const chip = (it: QuestItem, ph: number | undefined, key: string, star: boolean) => (
+    <button key={key} type="button" onClick={() => choose(it, ph)} title={`${it.quest.name} · ${where(it)}`}
+      className="flex max-w-xs items-center gap-1 rounded-full border border-zinc-700 bg-zinc-800 px-2.5 py-0.5 text-xs hover:border-sky-600 hover:bg-zinc-700">
+      {star && <span aria-hidden className="text-amber-400">★</span>}
+      <span className="truncate">{it.quest.name}</span>
+      {ph !== undefined && it.quest.phases.length > 1 && <span className="text-zinc-500">({ph})</span>}
+    </button>
+  );
+
   return (
     <section className="space-y-2 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
       <h2 className="font-semibold">Quest</h2>
-      <input className={sel} placeholder="Filtra guerre e quest…" value={filter} onChange={(e) => setFilter(e.target.value)} />
-      <div className="grid gap-2 sm:grid-cols-[2fr_2fr_1fr]">
-        <select className={sel} value={warId ?? ''} onChange={(e) => { setWarId(Number(e.target.value) || null); setQuestId(null); setPhase(null); }}>
-          <option value="">— Guerra —</option>
-          {shownWars.map((w) => <option key={w.warId} value={w.warId}>{w.warName}</option>)}
-        </select>
-        <select className={sel} value={questId ?? ''} disabled={!war} onChange={(e) => {
-          const q = war?.quests.find((x) => x.id === Number(e.target.value));
-          setQuestId(q?.id ?? null); setPhase(q ? q.phases[q.phases.length - 1] ?? null : null);
-        }}>
-          <option value="">— Quest —</option>
-          {quests.map((q) => <option key={q.id} value={q.id}>{q.name} ({q.type})</option>)}
-        </select>
-        <select className={sel} value={phase ?? ''} disabled={!quest} onChange={(e) => setPhase(Number(e.target.value))}>
-          {quest?.phases.map((p) => <option key={p} value={p}>Fase {p}</option>)}
-        </select>
-      </div>
+      {item && phase !== null && (
+        <div className="flex flex-wrap items-center gap-2 rounded bg-zinc-800/60 px-3 py-2">
+          <Star on={favs.includes(item.quest.id)} onToggle={() => toggleFav(item.quest.id)} name={item.quest.name} />
+          <span className="min-w-0 flex-1">
+            <span className="block truncate font-medium">{item.quest.name}</span>
+            <span className="block truncate text-xs text-zinc-400">{where(item)}</span>
+          </span>
+          <TypeBadge type={item.quest.type} />
+          {item.quest.phases.length > 1 && (
+            <details className="text-xs text-zinc-400">
+              <summary className="cursor-pointer select-none">Fase {phase}</summary>
+              <select aria-label="Fase" className={`${inp} mt-1 w-auto`} value={phase} onChange={(e) => choose(item, Number(e.target.value))}>
+                {item.quest.phases.map((p) => <option key={p} value={p}>Fase {p}</option>)}
+              </select>
+            </details>
+          )}
+        </div>
+      )}
+      <input
+        className={inp} placeholder="Cerca quest, guerra o luogo…" value={query} aria-label="Cerca quest"
+        role="combobox" aria-expanded={results.length > 0} aria-controls={listId} aria-autocomplete="list"
+        aria-activedescendant={results[active] ? `${listId}-${active}` : undefined}
+        onChange={(e) => { setQuery(e.target.value); setActive(0); }}
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowDown' && results.length) { e.preventDefault(); setActive((a) => (a + 1) % results.length); }
+          else if (e.key === 'ArrowUp' && results.length) { e.preventDefault(); setActive((a) => (a - 1 + results.length) % results.length); }
+          else if (e.key === 'Enter' && results[active]) { e.preventDefault(); choose(results[active]); }
+          else if (e.key === 'Escape') setQuery('');
+        }}
+      />
+      {!query.trim() && (favItems.length > 0 || recentItems.length > 0) && (
+        <div className="space-y-1">
+          {favItems.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-xs text-zinc-500">Preferiti</span>
+              {favItems.map((it) => chip(it, undefined, `f${it.quest.id}`, true))}
+            </div>
+          )}
+          {recentItems.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-xs text-zinc-500">Recenti</span>
+              {recentItems.map(({ it, phase: ph }) => chip(it, ph, `r${it.quest.id}`, false))}
+            </div>
+          )}
+        </div>
+      )}
+      {query.trim() && (results.length === 0
+        ? <p className="text-sm text-zinc-500">Nessuna quest trovata.</p>
+        : (
+          <ul id={listId} role="listbox" aria-label="Risultati quest" className="max-h-80 overflow-auto rounded border border-zinc-800">
+            {results.map((it, i) => (
+              <li key={it.quest.id} id={`${listId}-${i}`} role="option" aria-selected={i === active}
+                onClick={() => choose(it)} onMouseEnter={() => setActive(i)}
+                className={`flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm ${i === active ? 'bg-zinc-800' : ''}`}>
+                <Star on={favs.includes(it.quest.id)} onToggle={() => toggleFav(it.quest.id)} name={it.quest.name} tabIndex={-1} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate">{it.quest.name}</span>
+                  <span className="block truncate text-xs text-zinc-500">{where(it)}</span>
+                </span>
+                <TypeBadge type={it.quest.type} />
+              </li>
+            ))}
+          </ul>
+        ))}
       {err && <p className="text-sm text-red-400">Errore nel caricamento della quest: {err}</p>}
       {quest && phase !== null && !picked && !err && <p className="text-sm text-zinc-400">Caricamento quest…</p>}
       {picked?.unsupported && (
