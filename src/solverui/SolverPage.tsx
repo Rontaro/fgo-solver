@@ -7,7 +7,7 @@ import type { OwnedServant } from '../roster/types';
 import { compareSolutions, type Partial, type Solution, type SolveStats } from '../solver/solve';
 import type { Slot } from '../solver/autocomplete';
 import type { InMsg, OutMsg, Progress } from '../solver/worker-handler';
-import { defaultMc, describeTurns, formatTurns, ownedToMember, supportMember, SUPPORT_POOL_CAP, type CeChoice } from './members';
+import { defaultMc, describeTurns, formatTurns, ownedToMember, slotEnemyNames, supportMember, SUPPORT_POOL_CAP, type CeChoice } from './members';
 import { QuestPicker, type PickedQuest } from './QuestPicker';
 import { emptySlot, TeamBuilder, type SlotState } from './TeamBuilder';
 import { MarginBars, TurnSteps } from './TurnSteps';
@@ -21,7 +21,7 @@ const MAX_SHOWN = 50;
 const FGA = import.meta.env.VITE_ENABLE_FGA !== 'false';
 
 interface Found { solution: Solution; team?: string[] }
-interface Run { kind: 'team' | 'autocomplete'; front: string[]; back: string[]; mc: CompactMC; quest: string }
+interface Run { kind: 'team' | 'autocomplete'; front: string[]; back: string[]; mc: CompactMC; quest: string; slotNames: (string | undefined)[][] }
 
 export function SolverPage() {
   const { region, data } = useRegionData();
@@ -102,7 +102,7 @@ export function SolverPage() {
     }
     members.current = map;
     const k = team.map((m) => m.key);
-    setRun({ kind: isAuto ? 'autocomplete' : 'team', front: k.slice(0, 3), back: k.slice(3), mc, quest: quest.label });
+    setRun({ kind: isAuto ? 'autocomplete' : 'team', front: k.slice(0, 3), back: k.slice(3), mc, quest: quest.label, slotNames: slotEnemyNames(quest.raw) });
     setFound([]); setStats(null); setBest(undefined); setExhausted(null); setError(null); setRunning(true);
 
     w.onmessage = (e: MessageEvent<OutMsg>) => {
@@ -206,7 +206,8 @@ export function SolverPage() {
                   {f.team.map((k) => <FaceIcon key={k} face={unit(k)?.svt.face} name={name(k)} size={28} />)}
                 </div>
               )}
-              <TurnSteps turns={describeTurns(f.solution.turns, front, back, run.mc)} unit={unit} />
+              <TurnSteps turns={describeTurns(f.solution.turns, front, back, run.mc)} unit={unit}
+                enemyAt={(t, slot) => run.slotNames[t]?.[slot]} />
               {showText && (
                 <div className="border-t border-zinc-700 pt-1 text-xs text-zinc-300">
                   {formatTurns(f.solution.turns, front, back, name, run.mc).map((l, j) => <p key={j}>{l}</p>)}
