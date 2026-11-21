@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { RegionDataProvider, useRegionData } from './app/RegionData';
 import type { Region } from './data/types';
 import { RosterPage } from './roster/RosterPage';
+import { SolverPage } from './solverui/SolverPage';
 
 type Tab = 'roster' | 'solver';
 const REGIONS: Region[] = ['NA', 'JP'];
@@ -47,7 +48,7 @@ function Shell() {
         {loading && <p className="text-zinc-400">Caricamento dati {region}…</p>}
         {data && (tab === 'roster'
           ? <RosterPage />
-          : <p className="rounded-lg border border-zinc-800 bg-zinc-900 p-6 text-zinc-400">Solver: in arrivo.</p>)}
+          : <SolverPage />)}
       </main>
     </div>
   );
