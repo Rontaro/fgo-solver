@@ -45,6 +45,16 @@ export interface Effect {
   buffTraits?: number[];
   /** Skill effects only: runs later on its target (the trigger buff's holder), see Deferred. */
   deferred?: Deferred;
+  /**
+   * CE / event passive effects only (applied at battle start). full: the
+   * party target includes the back line (Atlas ptFull / ptOtherFull; plain
+   * ptAll / ptOther only reach the units on the field at battle start).
+   * onField (Atlas sval OnField): the buff only counts while its holder (the
+   * CE's servant) is on the front line, e.g. bond CE auras. Only kept on
+   * permanent buffs (turns and count -1).
+   */
+  full?: true;
+  onField?: true;
 }
 
 /**

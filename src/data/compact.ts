@@ -350,6 +350,25 @@ interface ConvOpts {
   drops?: string[];
   /** Internal (deferred conversion): accept lossNp on the holder. */
   allowLoss?: boolean;
+  /** CE / event passive (battle start): mark party reach and OnField auras (Effect.full / onField). */
+  start?: boolean;
+}
+
+/**
+ * Battle-start effects (opts.start): sval OnField = 1 on every level and
+ * variant ties the buff to its holder being on the field. Returns the
+ * function without the key (so plain() accepts it) and whether it was there;
+ * only permanent buffs (Turn and Count -1) qualify, others keep the key and
+ * stay unmodelled.
+ */
+function stripOnField(f: any): { f: any; onField: boolean } {
+  const sets: any[][] = ['svals', ...OC_SVALS].map((k) => f[k] ?? []).filter((x: any[]) => x.length);
+  const all = sets.flat();
+  if (!all.length || !all.every((v) => v.OnField === 1)) return { f, onField: false };
+  if (!all.every((v) => (v.Turn ?? -1) === -1 && (v.Count ?? -1) === -1)) return { f, onField: false };
+  const out = { ...f };
+  for (const k of ['svals', ...OC_SVALS]) if (f[k]) out[k] = f[k].map((v: any) => { const o = { ...v }; delete o.OnField; return o; });
+  return { f: out, onField: true };
 }
 
 /** End-of-turn trigger buffs that can become deferred effects (Effect.deferred). */
@@ -439,8 +458,9 @@ export function convertFunctions(funcs: any[], unsupported: string[], opts: Conv
   const drop = (tag: string) => opts.drops?.push(tag);
   let prevOk = false;
   let afterDamage = false;
-  for (const f of funcs) {
-    if (opts.npDamage && f === opts.npDamage) { prevOk = true; afterDamage = true; continue; }
+  for (const f0 of funcs) {
+    if (opts.npDamage && f0 === opts.npDamage) { prevOk = true; afterDamage = true; continue; }
+    const { f, onField } = opts.start ? stripOnField(f0) : { f: f0, onField: false };
     // team=enemy: only runs when an enemy casts it. Never for our side.
     if (f.funcTargetTeam === 'enemy') { prevOk = false; continue; }
     const svals: any[] = f.svals ?? [];
@@ -492,6 +512,8 @@ export function convertFunctions(funcs: any[], unsupported: string[], opts: Conv
 
     // lv = OC1 values: code that ignores OC stays conservative for helpful effects.
     const e: Effect = { kind: c.kind, target: TARGET[f.funcTargetType], lv: levels(svals, lvOk), ...qc };
+    if (opts.start && (f.funcTargetType === 'ptFull' || f.funcTargetType === 'ptOtherFull')) e.full = true;
+    if (onField) e.onField = true;
     if (opts.npExtras && sets.length === 5 && sets.some((s) => JSON.stringify(s) !== JSON.stringify(svals))) {
       e.oc = sets.map((s, i) => levels(s, setOk[i]));
     }
@@ -611,7 +633,7 @@ function eventPassivesOf(svt: any, unsupported: string[], base: ConvOpts): Event
     if (!g.ok) continue;
     let best: any = null;
     for (const sk of g.skills) if (!best || (sk.extraPassive[0].priority ?? 0) > (best.extraPassive[0].priority ?? 0)) best = sk;
-    const effects = convertFunctions(best.functions, unsupported, base);
+    const effects = convertFunctions(best.functions, unsupported, { ...base, start: true });
     if (!effects.length) continue;
     const eventIds = [...new Set<number>(best.extraPassive.flatMap((ep: any) => [ep.eventId, ep.script?.otherValidEventId ?? 0]).filter(Boolean))];
     out.push({ eventIds, effects });
@@ -709,7 +731,7 @@ export function compactCE(ce: any, triggers?: TriggerLookup, report?: PartDrops[
     return mlb && lb.length ? lb : ss.filter((s: any) => (s.condLimitCount ?? 0) === 0);
   };
   const conv = (mlb: boolean, drops: string[]) => nums.flatMap((num) => {
-    const per: Effect[][] = group(num, mlb).map((s: any) => convertFunctions(s.functions, unsupported, { triggers, drops }));
+    const per: Effect[][] = group(num, mlb).map((s: any) => convertFunctions(s.functions, unsupported, { triggers, drops, start: true }));
     if (per.length < 2) return per.flat();
     const traitsOf = (es: Effect[]) => new Set(es.flatMap((e) => e.fieldTraits ?? []));
     return per.flatMap((es, i) => {

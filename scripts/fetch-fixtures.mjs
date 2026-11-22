@@ -20,6 +20,7 @@ const files = {
   'skill-966458.json': '/nice/NA/skill/966458',
   'kaleidoscope.json': '/nice/NA/equip/34',
   'pioneering-oni.json': '/nice/NA/equip/2139', // field-conditioned event bonus (94000160)
+  'koyanskaya-bond.json': '/nice/NA/equip/1462', // bond CE: party aura while on field (OnField)
   'black-grail.json': '/nice/NA/equip/48', // self DoT (reduceHp)
   'aerial-drive.json': '/nice/NA/equip/683', // event encounter bonus
   'mc-combat.json': '/nice/NA/MC/20',

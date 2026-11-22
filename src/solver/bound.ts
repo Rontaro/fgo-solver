@@ -101,6 +101,8 @@ export function damageBound(s: BattleState, c: BoundCtx): BoundFail | null {
       for (const b of u.buffs as readonly Buff[]) {
         if (b.turns < 0 || inBack || b.turns >= W - T + 1) put(b, b.value);
       }
+      // Dormant auras (holder in the back) may wake up with the order change: counted.
+      for (const b of u.dormant ?? []) put(b, b.value);
       for (const p of u.pending) if (p.v.value > 0) put(p.e, p.v.value);
       for (const cu of pool) {
         cu.svt.skills.forEach((sk) => {

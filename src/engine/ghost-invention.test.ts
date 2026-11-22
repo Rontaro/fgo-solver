@@ -18,21 +18,22 @@
 // missing 15% is Koyanskaya of Light's bond CE ("Koyanskaya's Ambition -East
 // Coast Edition-": party Special Attack +15% vs [Human] and vs [Human
 // Attribute] while she is on the field). Only the wave 3 boss has [Human
-// Attribute] (202), which is why turns 1-2 match. Our engine does not apply a
-// CE's party-wide effects (conservative), so the test emulates that aura as a
-// +15% power vs 202 on Ishtar herself, which is exactly what it does here.
+// Attribute] (202), which is why turns 1-2 match. The aura is a ptFull buff
+// with sval OnField (Effect.onField): it counts while the Koyanskaya holding
+// the CE (koy2, who stays on the field) is on the front line.
 import { describe, it, expect } from 'vitest';
 import ishRaw from '../../test/fixtures/ishtar.json';
 import obRaw from '../../test/fixtures/oberon.json';
 import koyRaw from '../../test/fixtures/koyanskaya-light.json';
 import oniRaw from '../../test/fixtures/pioneering-oni.json';
+import bondRaw from '../../test/fixtures/koyanskaya-bond.json';
 import skill966533 from '../../test/fixtures/skill-966533.json';
 import skill960408 from '../../test/fixtures/skill-960408.json';
 import skill966456 from '../../test/fixtures/skill-966456.json';
 import skill966458 from '../../test/fixtures/skill-966458.json';
 import questRaw from '../../test/fixtures/quest-ghost-invention.json';
 import { compactServant, compactCE } from '../data/compact';
-import type { CompactCE, Effect } from '../data/types';
+import type { CompactCE } from '../data/types';
 import { questFromAtlas, type RawQuest } from './quest';
 import { initBattle, useSkill, useMc, endTurn, nextWave, type BattleState, type Quest } from './state';
 import { fireNp } from './np';
@@ -45,23 +46,21 @@ const ishtar = compactServant(ishRaw as any, triggers);
 const oberon = compactServant(obRaw as any, triggers);
 const koyanskaya = compactServant(koyRaw as any, triggers);
 const oni = compactCE(oniRaw as any);
+const bond = compactCE(bondRaw as any);
 const quest: Quest = questFromAtlas({ ...(questRaw as unknown as RawQuest), eventId: 80494 });
 
-// Koyanskaya's bond CE aura, as it acts on Ishtar (see the header).
-const bondAura: Effect = { kind: 'powerUp', target: 'self', lv: [{ value: 150, turns: -1, count: -1 }], opTraits: [202] };
-const oniWithAura: CompactCE = { ...oni, effectsMlb: [...oni.effectsMlb, bondAura] };
-
-// Lv90 ATK: Ishtar 12252, Koyanskaya 11616, Oberon 11810.
-const team = (ce: CompactCE = oni) => [
+// Lv90 ATK: Ishtar 12252, Koyanskaya 11616, Oberon 11810. withBond: koy2
+// holds her bond CE (its +100 ATK does not matter, she never fires her NP).
+const team = (withBond = false, ce: CompactCE = oni) => [
   member(ishtar, 'ish', { fou: 15252 - 12252 - ce.atkGrowth[0], ce, ceLv: 1, ceMlb: true }),
-  member(koyanskaya, 'koy2', { fou: 1000 }),
+  member(koyanskaya, 'koy2', { fou: 1000, ...(withBond && { ce: bond, ceLv: 1 }) }),
   member(koyanskaya, 'koy3', { fou: 1000 }),
   member(oberon, 'ob', { fou: 1000 }),
 ];
 
 /** Laplace's line; returns the damage of Ishtar's NP on each enemy, per turn. */
-function laplaceLine(ce?: CompactCE): number[][] {
-  let s: BattleState = initBattle(team(ce), mcCombat, 10, quest, constants);
+function laplaceLine(withBond = false): number[][] {
+  let s: BattleState = initBattle(team(withBond), mcCombat, 10, quest, constants);
   expect(s.front[0]!.atk).toBe(15252);
   const out: number[][] = [];
   const np = () => {
@@ -100,8 +99,17 @@ describe('Ghost Room "The Dangerous Invention" golden test (Laplace)', () => {
     t1.forEach((d) => near(d, 332788));
     near(t2[0], 526783); near(t2[1], 579439); near(t2[2], 526783);
   });
-  it('turn 3 matches Laplace (±2%) once Koyanskaya\'s bond CE aura is counted; without it, 15% of power short', () => {
-    const t3 = laplaceLine(oniWithAura)[2];
+  it('the bond CE is a party aura tied to the field', () => {
+    expect(bond.unsupported).toEqual([]);
+    expect(bond.effects).toEqual([
+      expect.objectContaining({ kind: 'powerUp', target: 'ptAll', full: true, onField: true, opTraits: [1001] }),
+      expect.objectContaining({ kind: 'powerUp', target: 'ptAll', full: true, onField: true, opTraits: [202] }),
+    ]);
+  });
+  it('turn 3 matches Laplace (±2%) with Koyanskaya\'s bond CE; without it, 15% of power short', () => {
+    const withBond = laplaceLine(true);
+    near(withBond[1][0], 526783); // the zombies have neither trait: turns 1-2 unchanged
+    const t3 = withBond[2];
     near(t3[0], 1010385);
     const bare = laplaceLine()[2][0];
     expect(bare / 1010385).toBeCloseTo(5.10 / 5.25, 3);
@@ -117,11 +125,23 @@ describe('Ghost Room "The Dangerous Invention" golden test (Laplace)', () => {
     const r = fireNp(s, 'ish');
     expect((s.enemies[0].hp - r.state.enemies[0].hp) / 526783).toBeLessThan(0.85);
   });
-  it('solver: finds a 3T with the aura (Oberon from the back, S3 on the last turn only)', () => {
-    const r = solve(team(oniWithAura), mcCombat, 10, quest, constants, { maxMs: 120_000, maxSolutions: 1 });
+  it('the aura sleeps while its holder is in the back, and wakes up on the order change', () => {
+    const t = team();
+    t[2] = member(koyanskaya, 'koy3', { fou: 1000, ce: bond, ceLv: 1 });
+    let s = initBattle(t, mcCombat, 10, quest, constants);
+    const unit = (k: string) => [...s.front, ...s.back].find((u) => u?.key === k)!;
+    expect(unit('ish').buffs.filter((b) => b.src === 'koy3')).toHaveLength(2);
+    expect(unit('ob').buffs.filter((b) => b.src === 'koy3')).toHaveLength(2); // ptFull: back line too
+    s = useMc(s, 2, mcCombat, 10, undefined, [2, 0]); // koy3 <-> Oberon
+    expect(unit('ish').buffs.some((b) => b.src)).toBe(false);
+    expect(unit('ish').dormant).toHaveLength(2);
+    expect(unit('ob').buffs.some((b) => b.src)).toBe(false);
+  });
+  it('solver: finds a 3T with the bond CE (Oberon from the back, S3 on the last turn only)', () => {
+    const r = solve(team(true), mcCombat, 10, quest, constants, { maxMs: 120_000, maxSolutions: 1 });
     expect(r.solutions.length).toBe(1);
     const sol = r.solutions[0];
-    expect(replay(team(oniWithAura), mcCombat, 10, quest, constants, sol)).toHaveLength(3);
+    expect(replay(team(true), mcCombat, 10, quest, constants, sol)).toHaveLength(3);
     expect(sol.usesSwap).toBe(true);
     // Oberon's S2 / S3 (end-of-turn drain and sleep) only on the last turn.
     for (const t of sol.turns.slice(0, 2)) expect(t.some((x) => x.unit === 'ob')).toBe(false);

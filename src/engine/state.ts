@@ -13,6 +13,8 @@ export interface Buff {
   readonly cards?: readonly Card[]; readonly opTraits?: readonly number[];
   /** buffRate: buff traits it amplifies; other kinds: their traits a buffRate can target (Effect). */
   readonly rateOf?: readonly number[]; readonly buffTraits?: readonly number[];
+  /** Aura (Effect.onField): counts only while the unit with this key is on the front line. */
+  readonly src?: string;
 }
 /**
  * A deferred effect waiting on its holder (Effect.deferred): it runs at the
@@ -30,6 +32,12 @@ export interface Unit {
   readonly pending: readonly Pending[];
   /** The buffs it casts fail (CompactServant.castBlockTraits of a party member). */
   readonly castBlocked?: true;
+  /**
+   * Auras (Buff.src) whose holder is in the back line: inactive, moved back to
+   * `buffs` when the holder enters the field (syncAuras). They are permanent,
+   * so this list only depends on who is on the front line.
+   */
+  readonly dormant?: readonly Buff[];
 }
 export interface Enemy {
   readonly hp: number; readonly className: string; readonly attribute: string;
@@ -327,7 +335,9 @@ export function initBattle(members: readonly TeamMember[], mc: CompactMC, mcLv: 
   }
   const cond = questCond(quest);
   const blockTraits = new Set(members.flatMap((m) => m.svt.castBlockTraits ?? []));
-  const units = members.map((m): Unit => {
+  // CE / event passive effects on other units or tied to the field (applied below).
+  const party: { e: Effect; v: LevelVal; holder: string; castBlocked: boolean }[] = [];
+  const built = members.map((m): Unit => {
     const svt = usableServant(m.svt);
     const castBlocked = svt.traits.some((t) => blockTraits.has(t));
     const what = (f: string) => `${m.key}.${f}`;
@@ -354,7 +364,11 @@ export function initBattle(members: readonly TeamMember[], mc: CompactMC, mcLv: 
     ];
     for (const e of start) {
       const v = e.lv[0];
-      if (!v || v.value === 0 || e.target !== 'self' || !effectActive(e, cond)) continue;
+      if (!v || v.value === 0 || !effectActive(e, cond)) continue;
+      if (e.target !== 'self' || e.onField) {
+        if (e.target === 'self' || e.target === 'ptAll' || e.target === 'ptOther') party.push({ e, v, holder: m.key, castBlocked });
+        continue;
+      }
       if (e.kind === 'gainNp') gauge += v.value;
       else if (isBuffKind(e.kind) && !castBlocked) buffs.push(toBuff(e, e.kind, v));
     }
@@ -365,14 +379,52 @@ export function initBattle(members: readonly TeamMember[], mc: CompactMC, mcLv: 
       ...(castBlocked && { castBlocked: true as const }),
     };
   });
+  // Party-wide battle-start effects (Chaldea activates every member's CE and
+  // event passive at battle start, back line included): ptAll / ptOther reach
+  // the units on the field then, Effect.full ones the whole party; an onField
+  // aura stays on its targets but only counts while its holder is on the field.
+  const units = built.map((u) => ({ ...u, buffs: [...u.buffs] }));
+  for (const { e, v, holder, castBlocked } of party) {
+    units.forEach((u, i) => {
+      const reach = e.target === 'self' ? u.key === holder
+        : (e.full || i < 3) && (e.target === 'ptAll' || u.key !== holder);
+      if (!reach) return;
+      if (e.kind === 'gainNp') {
+        if (!e.onField) units[i] = { ...u, gauge: Math.min(gaugeCap(u.npLv), u.gauge + v.value) };
+      } else if (isBuffKind(e.kind) && !castBlocked) {
+        const b = toBuff(e, e.kind, v);
+        (u.buffs as Buff[]).push(e.onField ? { ...b, src: holder } : b);
+      }
+    });
+  }
   const enemies = quest.waves[0];
   const lay = layoutOf(quest, 0);
-  return {
+  return syncAuras({
     turn: 1, wave: 0,
     front: units.slice(0, 3), back: units.slice(3),
     enemies, ...waveState(lay), mcCd: mc.skills.map(() => 0), swapped: false,
     aff: affTable(constants, units, enemies), cond, lastWave: quest.waves.length - 1,
+  });
+}
+
+/**
+ * Puts every aura (Buff.src) in `buffs` when its holder is on the front line
+ * and in `dormant` otherwise. Called whenever the front line changes (battle
+ * start, order change). Units without auras keep their identity.
+ */
+function syncAuras<S extends { front: readonly (Unit | null)[]; back: readonly Unit[] }>(s: S): S {
+  const all = [...s.front, ...s.back];
+  if (!all.some((u) => u && (u.dormant?.length || u.buffs.some((b) => b.src)))) return s;
+  const onField = new Set(s.front.filter((u): u is Unit => u !== null).map((u) => u.key));
+  const fix = (u: Unit): Unit => {
+    if (!u.dormant?.length && !u.buffs.some((b) => b.src)) return u;
+    const pool = [...u.buffs, ...(u.dormant ?? [])];
+    const buffs = pool.filter((b) => !b.src || onField.has(b.src));
+    const dormant = pool.filter((b) => b.src && !onField.has(b.src));
+    const { dormant: _old, ...rest } = u;
+    return dormant.length ? { ...rest, buffs, dormant } : { ...rest, buffs };
   };
+  return { ...s, front: s.front.map((u) => (u ? fix(u) : null)), back: s.back.map(fix) };
 }
 
 export function useSkill(state: BattleState, unitKey: string, num: 1 | 2 | 3, targetKey?: string): BattleState {
@@ -415,6 +467,7 @@ export function useMc(state: BattleState, index: number, mc: CompactMC, mcLv: nu
     back[b] = out;
     d.back = back;
     d.swapped = true;
+    Object.assign(d, syncAuras(d));
   }
   const mcCd = d.mcCd.slice();
   mcCd[index] = skill.cooldown[idx];
