@@ -7,17 +7,29 @@ import type { CompactServant, CompactCE, CompactMC, Constants, Effect, EffectKin
  * table are shared between states, so cloning is cheap for the solver.
  */
 
-export type BuffKind = Extract<EffectKind, 'atkUp' | 'cardUp' | 'npDmgUp' | 'powerUp' | 'npGainUp' | 'ocUp' | 'dmgPlus'>;
+export type BuffKind = Extract<EffectKind, 'atkUp' | 'cardUp' | 'npDmgUp' | 'powerUp' | 'npGainUp' | 'ocUp' | 'dmgPlus' | 'buffRate'>;
 export interface Buff {
   readonly kind: BuffKind; readonly value: number; readonly turns: number; readonly count: number;
   readonly cards?: readonly Card[]; readonly opTraits?: readonly number[];
+  /** buffRate: buff traits it amplifies; other kinds: their traits a buffRate can target (Effect). */
+  readonly rateOf?: readonly number[]; readonly buffTraits?: readonly number[];
 }
+/**
+ * A deferred effect waiting on its holder (Effect.deferred): it runs at the
+ * end of the turn when wait reaches 0 (wait 1 = this turn's end), then again
+ * at each following turn end while times is left.
+ */
+export interface Pending { readonly e: Effect; readonly v: LevelVal; readonly wait: number; readonly times: number; }
 export interface Unit {
   readonly key: string; readonly svt: CompactServant; readonly lv: number; readonly npLv: number;
   readonly skillLv: readonly [number, number, number];
   readonly atk: number; readonly gauge: number;
   readonly cd: readonly [number, number, number];
   readonly buffs: readonly Buff[];
+  /** Deferred effects on this unit (see Pending). */
+  readonly pending: readonly Pending[];
+  /** The buffs it casts fail (CompactServant.castBlockTraits of a party member). */
+  readonly castBlocked?: true;
 }
 export interface Enemy {
   readonly hp: number; readonly className: string; readonly attribute: string;
@@ -59,6 +71,8 @@ export interface BattleState {
   readonly aff: Readonly<Record<string, readonly Affinity[]>>;
   /** The quest's field traits and event, for quest-conditioned effects (effectActive). */
   readonly cond: QuestCond;
+  /** Index of the quest's last wave: Skill.lastTurnOnly skills are only usable on it. */
+  readonly lastWave: number;
 }
 export interface QuestCond { readonly fieldTraits: readonly number[]; readonly eventId: number; }
 export interface TeamMember {
@@ -103,6 +117,27 @@ export const questCond = (q: Quest): QuestCond => ({ fieldTraits: q.fieldTraits 
 export function effectActive(e: Pick<Effect, 'fieldTraits' | 'eventId'>, c: QuestCond): boolean {
   if (e.fieldTraits && !e.fieldTraits.some((t) => c.fieldTraits.includes(t))) return false;
   return !e.eventId || e.eventId === c.eventId;
+}
+
+/*
+ * The parts of a servant the engine may use (CompactServant per-part marks):
+ * skills with unsupported effects are left out (never usable: useSkill throws
+ * as for a missing skill) and an NP with unsupported effects becomes null
+ * (never fires). Sound: a part that is never used cannot change anything.
+ * Cached, so a servant keeps one view (object identity) across battles.
+ */
+const views = new WeakMap<CompactServant, CompactServant>();
+export function usableServant(svt: CompactServant): CompactServant {
+  let v = views.get(svt);
+  if (!v) {
+    const bad = svt.skills.some((k) => k.unsupported?.length) || !!svt.np?.unsupported?.length;
+    v = bad ? {
+      ...svt, skills: svt.skills.filter((k) => !k.unsupported?.length),
+      np: svt.np?.unsupported?.length ? null : svt.np,
+    } : svt;
+    views.set(svt, v);
+  }
+  return v;
 }
 
 const plainLayouts = new WeakMap<readonly Enemy[], WaveLayout>();
@@ -180,12 +215,13 @@ export interface Mods {
   npGainMod: number; ocUp: number; dmgPlus: number;
 }
 
-// Buff kinds and the modifier each one adds to.
-const MOD_FIELD: Record<BuffKind, keyof Mods> = {
+// Buff kinds and the modifier each one adds to (buffRate scales the others, see mods()).
+const MOD_FIELD: Record<Exclude<BuffKind, 'buffRate'>, keyof Mods> = {
   atkUp: 'atkMod', cardUp: 'cardMod', npDmgUp: 'npDmgMod', powerUp: 'powerMod',
   npGainUp: 'npGainMod', ocUp: 'ocUp', dmgPlus: 'dmgPlus',
 };
-export const isBuffKind = (k: EffectKind): k is BuffKind => k in MOD_FIELD;
+export const isBuffKind = (k: EffectKind): k is BuffKind => k in MOD_FIELD || k === 'buffRate';
+const NO_PENDING: readonly Pending[] = [];
 
 // --- affinity ------------------------------------------------------------
 
@@ -226,12 +262,20 @@ function toBuff(e: Effect, kind: BuffKind, v: LevelVal): Buff {
   const b: { -readonly [K in keyof Buff]: Buff[K] } = { kind, value: v.value, turns: v.turns, count: v.count };
   if (e.cards) b.cards = e.cards;
   if (e.opTraits) b.opTraits = e.opTraits;
+  if (e.rateOf) b.rateOf = e.rateOf;
+  if (e.buffTraits) b.buffTraits = e.buffTraits;
   return b;
 }
 
 /** One effect on one unit; returns the new unit. */
 function effectOn(u: Unit, e: Effect, v: LevelVal): Unit {
+  if (e.deferred) {
+    const delay = e.deferred.at === 'delay';
+    const p: Pending = { e, v, wait: delay ? e.deferred.turns : 1, times: delay ? 1 : e.deferred.turns };
+    return { ...u, pending: [...u.pending, p] };
+  }
   if (e.kind === 'gainNp') return { ...u, gauge: Math.min(gaugeCap(u.npLv), u.gauge + v.value) };
+  if (e.kind === 'lossNp') return { ...u, gauge: Math.max(0, u.gauge - v.value) };
   if (e.kind === 'shortenSkill') return { ...u, cd: sub3(u.cd, v.value) };
   if (isBuffKind(e.kind)) return { ...u, buffs: [...u.buffs, toBuff(e, e.kind, v)] };
   return u;
@@ -245,6 +289,9 @@ function effectOn(u: Unit, e: Effect, v: LevelVal): Unit {
 export function applyEffect(d: { front: Front; cond: QuestCond }, e: Effect, v: LevelVal, casterKey: string | null, targetKey?: string): void {
   if (v.value === 0 || e.kind === 'orderChange' || !effectActive(e, d.cond)) return;
   const f = d.front;
+  // A caster whose buffs fail (castBlocked): its buffs, and the trigger buffs
+  // behind deferred effects, are dropped; a deferred NP drain is kept (conservative).
+  if (casterKey !== null && (isBuffKind(e.kind) || (e.deferred && e.kind !== 'lossNp')) && f.find((x) => x?.key === casterKey)?.castBlocked) return;
   const on = (i: number) => { f[i] = effectOn(f[i]!, e, v); };
   switch (e.target) {
     case 'self':
@@ -279,7 +326,10 @@ export function initBattle(members: readonly TeamMember[], mc: CompactMC, mcLv: 
     keys.add(m.key);
   }
   const cond = questCond(quest);
+  const blockTraits = new Set(members.flatMap((m) => m.svt.castBlockTraits ?? []));
   const units = members.map((m): Unit => {
+    const svt = usableServant(m.svt);
+    const castBlocked = svt.traits.some((t) => blockTraits.has(t));
     const what = (f: string) => `${m.key}.${f}`;
     inRange(m.lv, 1, m.svt.atkGrowth.length, what('lv'));
     inRange(m.npLv, 1, 5, what('npLv'));
@@ -292,8 +342,9 @@ export function initBattle(members: readonly TeamMember[], mc: CompactMC, mcLv: 
     let gauge = m.append2Lv > 0 ? m.svt.append2[m.append2Lv - 1] : 0;
     // Passives and CEs use index 0. Only self-targeted ones are applied: a
     // party-wide passive/CE effect is skipped (conservative, they only help).
-    for (const e of m.svt.passives) {
+    for (const e of svt.passives) {
       const v = e.lv[0];
+      if (castBlocked) break; // conservative: its own passive buffs are dropped too
       if (v && v.value !== 0 && v.turns === -1 && e.target === 'self' && isBuffKind(e.kind) && effectActive(e, cond)) buffs.push(toBuff(e, e.kind, v));
     }
     // CE and event bonus passives (Chaldea's activateExtraPassive / activateCE, at battle start).
@@ -305,12 +356,13 @@ export function initBattle(members: readonly TeamMember[], mc: CompactMC, mcLv: 
       const v = e.lv[0];
       if (!v || v.value === 0 || e.target !== 'self' || !effectActive(e, cond)) continue;
       if (e.kind === 'gainNp') gauge += v.value;
-      else if (isBuffKind(e.kind)) buffs.push(toBuff(e, e.kind, v));
+      else if (isBuffKind(e.kind) && !castBlocked) buffs.push(toBuff(e, e.kind, v));
     }
     return {
-      key: m.key, svt: m.svt, lv: m.lv, npLv: m.npLv, skillLv: [...m.skillLv],
+      key: m.key, svt, lv: m.lv, npLv: m.npLv, skillLv: [...m.skillLv],
       atk: m.svt.atkGrowth[m.lv - 1] + m.fou + (m.ce ? m.ce.atkGrowth[m.ceLv - 1] : 0),
-      gauge: Math.min(gaugeCap(m.npLv), gauge), cd: [0, 0, 0], buffs,
+      gauge: Math.min(gaugeCap(m.npLv), gauge), cd: [0, 0, 0], buffs, pending: NO_PENDING,
+      ...(castBlocked && { castBlocked: true as const }),
     };
   });
   const enemies = quest.waves[0];
@@ -319,7 +371,7 @@ export function initBattle(members: readonly TeamMember[], mc: CompactMC, mcLv: 
     turn: 1, wave: 0,
     front: units.slice(0, 3), back: units.slice(3),
     enemies, ...waveState(lay), mcCd: mc.skills.map(() => 0), swapped: false,
-    aff: affTable(constants, units, enemies), cond,
+    aff: affTable(constants, units, enemies), cond, lastWave: quest.waves.length - 1,
   };
 }
 
@@ -331,6 +383,7 @@ export function useSkill(state: BattleState, unitKey: string, num: 1 | 2 | 3, ta
   if (!skill) throw new Error(`${unitKey} has no skill ${num}`);
   const i = num - 1;
   if (u.cd[i] > 0) throw new Error(`${unitKey} skill ${num} is on cooldown`);
+  if (skill.lastTurnOnly?.length && state.wave !== state.lastWave) throw new Error(`${unitKey} skill ${num} is usable on the last turn only`);
   const idx = u.skillLv[i] - 1;
   for (const e of skill.effects) applyEffect(d, e, e.lv[idx], unitKey, targetKey);
   const after = d.front[ui]!;
@@ -369,6 +422,12 @@ export function useMc(state: BattleState, index: number, mc: CompactMC, mcLv: nu
   return d;
 }
 
+/**
+ * End of turn for a front-line unit: buff turns and cooldowns tick, then its
+ * deferred effects that are due run (Chaldea runs selfturnendFunction and
+ * delayFunction skills after the turn progress, so a buff they grant with
+ * turns 1 is active next turn).
+ */
 function tick(u: Unit): Unit {
   let changed = u.cd[0] > 0 || u.cd[1] > 0 || u.cd[2] > 0;
   const buffs: Buff[] = [];
@@ -376,7 +435,18 @@ function tick(u: Unit): Unit {
     if (b.turns < 0) buffs.push(b);
     else { changed = true; if (b.turns > 1) buffs.push({ ...b, turns: b.turns - 1 }); }
   }
-  return changed ? { ...u, buffs, cd: sub3(u.cd, 1) } : u;
+  let out: Unit = changed ? { ...u, buffs, cd: sub3(u.cd, 1) } : u;
+  if (u.pending.length) {
+    const left: Pending[] = [];
+    const due: Pending[] = [];
+    for (const p of u.pending) {
+      if (p.wait > 1) left.push({ ...p, wait: p.wait - 1 });
+      else { due.push(p); if (p.times > 1) left.push({ ...p, wait: 1, times: p.times - 1 }); }
+    }
+    out = { ...out, pending: left.length ? left : NO_PENDING };
+    for (const p of due) out = effectOn(out, { ...p.e, deferred: undefined }, p.v);
+  }
+  return out;
 }
 
 /**
@@ -423,6 +493,25 @@ export function buffApplies(b: Buff, enemy: Enemy, card: Card): boolean {
  */
 export function mods(unit: Unit, enemy: Enemy, card: Card): Mods {
   const m: Mods = { atkMod: 0, cardMod: 0, npDmgMod: 0, powerMod: 0, npGainMod: 0, ocUp: 0, dmgPlus: 0 };
-  for (const b of unit.buffs) if (buffApplies(b, enemy, card)) m[MOD_FIELD[b.kind]] += b.value;
+  const rates = unit.buffs.filter((b) => b.kind === 'buffRate');
+  for (const b of unit.buffs) {
+    if (b.kind === 'buffRate' || !buffApplies(b, enemy, card)) continue;
+    m[MOD_FIELD[b.kind]] += rates.length ? rated(b, rates) : b.value;
+  }
   return m;
+}
+
+/**
+ * A buff's value under buff effectiveness up (Chaldea's getBuffRateValue):
+ * the rates of the holder's buffRate buffs whose traits match one of the
+ * buff's (any-of) add up on a base of 1000, capped at 5000 (Atlas buffRate
+ * action: baseParam 1000, maxRate 5000), and the value is multiplied by it,
+ * truncated per buff. Only positive values are scaled (no modelled buff has a
+ * negative one).
+ */
+export function rated(b: Buff, rates: readonly Buff[]): number {
+  if (!b.buffTraits || b.value <= 0) return b.value;
+  let r = 0;
+  for (const x of rates) if (x.rateOf?.some((t) => b.buffTraits!.includes(t))) r += x.value;
+  return r ? Math.trunc((b.value * Math.min(5000, Math.max(0, 1000 + r))) / 1000) : b.value;
 }

@@ -13,7 +13,11 @@ import { npDamage } from '../engine/damage';
  * most one back unit (the best choice). Damage is monotone in every modifier, so if even that leaves an enemy
  * alive, no line of play explored by the solver clears that wave.
  * Gauge is ignored (optimistic). With a shortenSkill anywhere in the team every
- * skill is counted once per turn, the most the solver ever uses it.
+ * skill is counted once per turn, the most the solver ever uses it. Deferred
+ * effects (Effect.deferred) count as if immediate, and pending ones on a unit
+ * as live buffs (both optimistic). Buff effectiveness up (buffRate) scales
+ * every damage modifier of the shooter by the sum of every rate that can reach
+ * it (capped like the engine), more than the engine ever applies.
  *
  * Every enemy of the wave counts, the reserve included, and every NP is
  * counted as hitting it (AoE, optimistic for single target). At most 3 NPs
@@ -87,7 +91,9 @@ export function damageBound(s: BattleState, c: BoundCtx): BoundFail | null {
     for (const u of shooters) {
       const np = u.svt.np!;
       const perEnemy = enemies.map(() => ({ atkMod: 0, cardMod: 0, npDmgMod: 0, powerMod: 0, dmgPlus: 0 }));
+      let rate = 0;
       const put = (x: { kind: string; cards?: readonly string[]; opTraits?: readonly number[] }, v: number) => {
+        if (x.kind === 'buffRate') { rate += v; return; }
         enemies.forEach((en, i) => { if (counts(x, np, en)) perEnemy[i][FIELD[x.kind as DmgKind]] += v; });
       };
       // Live buffs still active on wave W (a buff on a back unit is frozen there: counted).
@@ -95,6 +101,7 @@ export function damageBound(s: BattleState, c: BoundCtx): BoundFail | null {
       for (const b of u.buffs as readonly Buff[]) {
         if (b.turns < 0 || inBack || b.turns >= W - T + 1) put(b, b.value);
       }
+      for (const p of u.pending) if (p.v.value > 0) put(p.e, p.v.value);
       for (const cu of pool) {
         cu.svt.skills.forEach((sk) => {
           const i = sk.num - 1;
@@ -128,7 +135,10 @@ export function damageBound(s: BattleState, c: BoundCtx): BoundFail | null {
       enemies.forEach((en, i) => {
         if (en.hp <= 0) return;
         const a = W === T && s.aff[u.key] ? s.aff[u.key][i] : affinity(c.constants, u.svt, en);
-        const m = perEnemy[i];
+        const m0 = perEnemy[i];
+        const k = Math.min(5000, 1000 + rate) / 1000;
+        const up = (v: number) => (rate > 0 && v > 0 ? v * k : v);
+        const m = { atkMod: up(m0.atkMod), cardMod: up(m0.cardMod), npDmgMod: up(m0.npDmgMod), powerMod: up(m0.powerMod), dmgPlus: up(m0.dmgPlus) };
         const se = np.seTraits && np.seMult && np.seTraits.some((t) => en.traits.includes(t)) ? maxRow(np.seMult, u.npLv) : 1000;
         sums[i].push(npDamage({
           atk: u.atk, mult, card: np.card, cardMod: m.cardMod, classAtk: a.classAtk, triangle: a.triangle,

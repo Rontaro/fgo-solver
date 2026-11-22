@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { CompactServant, Constants, Effect } from '../data/types';
 import {
-  initBattle, useSkill, useMc, endTurn, nextWave, mods, gaugeCap,
+  initBattle, useSkill, useMc, endTurn, nextWave, mods, gaugeCap, usableServant,
   type BattleState, type Enemy, type Unit, type TeamMember,
 } from './state';
 import { castoria, altria, siegfried, kaleidoscope, mcCombat, prisonRuins, constants, member } from './test-helpers';
@@ -369,5 +369,92 @@ describe('benchmark', () => {
     const ms = performance.now() - t0;
     console.log(`100k useSkill+endTurn: ${ms.toFixed(0)} ms (${(ms * 10).toFixed(1)} ns/cycle)`);
     expect(n).toBe(200_000);
+  });
+});
+
+describe('per-part marks, deferred effects, buff effectiveness, cast block', () => {
+  const sk = (num: 1 | 2 | 3, effects: Effect[], more: object = {}) => ({ num, cooldown: Array(10).fill(3), effects, ...more });
+  const def = (e: Effect, at: 'delay' | 'turnEnd', turns: number): Effect => ({ ...e, deferred: { at, turns } });
+  const tester: CompactServant = {
+    ...altria, id: 77, name: 'Tester', passives: [], eventPassives: undefined,
+    skills: [
+      sk(1, [def({ kind: 'atkUp', target: 'self', lv: fill(500, 1) }, 'delay', 1), { kind: 'gainNp', target: 'self', lv: fill(5000) }]),
+      sk(2, [{ kind: 'gainNp', target: 'self', lv: fill(3000) }, def({ kind: 'lossNp', target: 'self', lv: fill(2000) }, 'turnEnd', 2)]),
+      sk(3, [{ kind: 'gainNp', target: 'self', lv: fill(1000) }], { lastTurnOnly: ['test'] }),
+    ],
+  };
+  const start1 = (svt: CompactServant, ...more: TeamMember[]) => start([member(svt, 't'), ...more]);
+  it('delay: the buff is pending this turn and active on the next one only', () => {
+    let s = useSkill(start1(tester), 't', 1);
+    const atk = (x: BattleState) => mods(unit(x, 't'), enemy(), 'buster').atkMod;
+    expect(atk(s)).toBe(0);
+    expect(unit(s, 't').pending).toHaveLength(1);
+    s = end(s);
+    expect(unit(s, 't').pending).toEqual([]);
+    expect(atk(s)).toBe(500);
+    expect(atk(end(s))).toBe(0);
+  });
+  it('turnEnd: an NP drain at the end of each of the next 2 turns, never below 0', () => {
+    let s = useSkill(start1(tester), 't', 2);
+    expect(unit(s, 't').gauge).toBe(3000);
+    s = end(s);
+    expect(unit(s, 't').gauge).toBe(1000);
+    s = end(s);
+    expect(unit(s, 't').gauge).toBe(0);
+    expect(unit(s, 't').pending).toEqual([]);
+  });
+  it('deferred effects are frozen in the back line', () => {
+    let s = useSkill(start([member(tester, 't'), member(altria, 'b'), member(siegfried, 'c'), member(castoria, 'd')]), 't', 1);
+    s = useMc(s, 2, mcCombat, 10, undefined, [0, 0]);
+    s = end(s);
+    expect(unit(s, 't').pending).toHaveLength(1);
+    expect(unit(s, 't').buffs).toEqual([]);
+  });
+  it('lastTurnOnly: refused before the last wave', () => {
+    let s = start1(tester);
+    expect(() => useSkill(s, 't', 3)).toThrow(/last turn only/);
+    s = nextWave(end(s), prisonRuins, constants);
+    s = nextWave(end(s), prisonRuins, constants);
+    expect(unit(useSkill(s, 't', 3), 't').gauge).toBe(1000);
+  });
+  it('usableServant: unsupported skills are left out and an unsupported NP never fires', () => {
+    const bad: CompactServant = { ...tester, skills: [tester.skills[0], { ...tester.skills[1], unsupported: ['x'] }], np: { ...altria.np!, unsupported: ['y'] } };
+    const v = usableServant(bad);
+    expect(v.skills.map((k) => k.num)).toEqual([1]);
+    expect(v.np).toBeNull();
+    expect(usableServant(bad)).toBe(v);
+    expect(usableServant(altria)).toBe(altria);
+    const s = start1(bad);
+    expect(() => useSkill(s, 't', 2)).toThrow(/has no skill 2/);
+  });
+  it('buffRate: matching buffs count value * (1000 + rate) / 1000, truncated, the others unchanged', () => {
+    const booster: CompactServant = {
+      ...castoria, id: 78, name: 'Booster', passives: [], np: null,
+      skills: [sk(1, [
+        { kind: 'npDmgUp', target: 'ptOne', lv: fill(333, 3), buffTraits: [3030] },
+        { kind: 'atkUp', target: 'ptOne', lv: fill(200, 3) },
+        { kind: 'buffRate', target: 'ptOne', lv: fill(1000, 1), rateOf: [3030] },
+      ])],
+    };
+    let s = useSkill(start([member(altria, 'a'), member(booster, 'b')]), 'b', 1, 'a');
+    const m = mods(unit(s, 'a'), enemy(), 'buster');
+    expect(m.npDmgMod).toBe(666);
+    expect(m.atkMod).toBe(200);
+    s = end(s); // the 1-turn rate is gone
+    expect(mods(unit(s, 'a'), enemy(), 'buster').npDmgMod).toBe(333);
+  });
+  it('castBlockTraits: a party member with the trait casts no buffs (charge still works)', () => {
+    const blocker: CompactServant = { ...castoria, id: 79, name: 'Blocker', passives: [], np: null, skills: [], castBlockTraits: [424242] };
+    const merlin: CompactServant = {
+      ...castoria, id: 80, name: 'Merl', traits: [...castoria.traits, 424242], passives: [], np: null,
+      skills: [sk(1, [{ kind: 'atkUp', target: 'ptAll', lv: fill(200, 3) }, { kind: 'gainNp', target: 'ptAll', lv: fill(2000) }])],
+    };
+    const s = useSkill(start([member(altria, 'a'), member(merlin, 'm'), member(blocker, 'x')]), 'm', 1);
+    expect(unit(s, 'a').buffs.filter((b) => b.kind === 'atkUp')).toEqual([]);
+    expect(unit(s, 'a').gauge).toBe(2000);
+    expect(unit(s, 'm').castBlocked).toBe(true);
+    // Without the blocker in the party the buff lands.
+    const t = useSkill(start([member(altria, 'a'), member(merlin, 'm')]), 'm', 1);
+    expect(mods(unit(t, 'a'), enemy(), 'buster').atkMod).toBe(200);
   });
 });

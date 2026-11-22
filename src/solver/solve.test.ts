@@ -514,3 +514,75 @@ describe('solve: fuzz regressions against brute force', () => {
     });
   }
 });
+
+describe('solve: random instances with per-part marks against brute force', () => {
+  // Skills that are unsupported (must never be used: they carry a big charge
+  // that would make an otherwise impossible case feasible), last-turn-only,
+  // or with deferred effects (a delayed buff next turn, an NP drain at the
+  // turn end), plus buff effectiveness up. Same checks as the random instances.
+  // PERPART_SEED / PERPART_N: wider offline runs (default: the committed 16 cases).
+  let seed = Number(env.PERPART_SEED ?? 4242);
+  const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+  const pick = <T,>(xs: readonly T[]) => xs[Math.floor(rnd() * xs.length)];
+  const mk = (kind: EffectKind, target: TargetKind, value: number, turns = -1, extra: Partial<Effect> = {}): Effect =>
+    ({ kind, target, lv: fill(value, turns), ...extra });
+  const randEff = (): Effect => {
+    const r = rnd();
+    if (r < 0.2) return mk(pick(['atkUp', 'npDmgUp'] as EffectKind[]), pick(['self', 'ptOne'] as TargetKind[]), pick([300, 500]), 1,
+      { deferred: { at: 'delay', turns: pick([1, 1, 2]) }, buffTraits: [3030] });
+    if (r < 0.35) return mk('lossNp', pick(['self', 'ptOne'] as TargetKind[]), pick([2000, 5000]), -1, { deferred: { at: 'turnEnd', turns: pick([1, 2]) } });
+    if (r < 0.45) return mk('buffRate', pick(['self', 'ptOne', 'ptAll'] as TargetKind[]), pick([500, 1000]), pick([1, 3]), { rateOf: [3030] });
+    const kind = pick(['atkUp', 'gainNp', 'npDmgUp', 'powerUp'] as EffectKind[]);
+    const v = kind === 'gainNp' ? pick([2000, 3000, 5000]) : pick([200, 300, 500]);
+    return mk(kind, pick(['self', 'ptOne', 'ptAll'] as TargetKind[]), v, pick([1, 3, -1]), kind === 'npDmgUp' ? { buffTraits: [3030] } : {});
+  };
+  const randSkills = () => ([1, 2, 3] as const).map((num) => {
+    const sk: CompactServant['skills'][number] = {
+      num, cooldown: Array(10).fill(pick([2, 3, 5, 7])),
+      effects: num === 1 ? [mk('gainNp', pick(['ptAll', 'ptOne', 'self'] as TargetKind[]), pick([5000, 10000])), randEff()] : [randEff(), randEff()],
+    };
+    const m = rnd();
+    if (m < 0.15) return { ...sk, effects: [...sk.effects, mk('gainNp', 'ptAll', 10000), mk('atkUp', 'ptAll', 1000, 3)], unsupported: ['test:unsupported'] };
+    if (m < 0.3) return { ...sk, lastTurnOnly: ['test:turnEnd'] };
+    return sk;
+  });
+  const randSvt = (id: number, shooter: boolean): CompactServant => {
+    const base = { ...castoria, id, name: 'P' + id, passives: [], skills: randSkills() };
+    if (!shooter) return { ...base, np: null };
+    const np = { ...altria.np!, card: pick(['arts', 'buster'] as const), extra: [],
+      // An unsupported NP never fires: a unit with one is not a shooter.
+      ...(rnd() < 0.15 && { unsupported: ['test:np'] }) };
+    return { ...altria, ...base, np };
+  };
+  const mcR: CompactMC = { ...mcB, skills: [mcB.skills[0], mcB.skills[2]] };
+  const cases = Array.from({ length: Number(env.PERPART_N ?? 16) }, (_, c) => {
+    const team = Array.from({ length: 3 }, (_, i) => member(randSvt(9800 + c * 10 + i, i === 0 || rnd() < 0.4), 'u' + i,
+      { npLv: pick([1, 3]), ...(i === 0 && { ce: kaleidoscope, ceLv: 100, ceMlb: rnd() < 0.5 }) }));
+    const hp = pick([1500, 3000, 5000, 8000]);
+    const q: Quest = { waves: [0, 1, 2].map((w) => Array.from({ length: 1 + Math.floor(rnd() * 2) },
+      () => ({ hp: Math.floor(hp * (0.5 + rnd()) * (1 + w * 0.5)), className: 'assassin', attribute: 'human', traits: [], tdRate: 1000 }))) };
+    return { team, q };
+  });
+  const results: number[] = [];
+  cases.forEach(({ team, q }, c) => {
+    it(`case ${c}: same feasibility and minimum action count`, () => {
+      results.push(againstBrute(team, q, mcR));
+      // Never an unsupported part, never a last-turn-only skill before the last turn.
+      const r = run(team, mcR, q, { maxMs: 20_000 });
+      for (const sol of r.solutions) sol.turns.forEach((turn, t) => turn.forEach((st) => {
+        const svt = team.find((m) => m.key === st.unit)?.svt;
+        if (!svt) return;
+        if (st.kind === 'np') { expect(svt.np?.unsupported).toBeUndefined(); return; }
+        const sk = svt.skills.find((k) => k.num === st.num)!;
+        expect(sk.unsupported).toBeUndefined();
+        if (sk.lastTurnOnly) expect(t).toBe(q.waves.length - 1);
+      }));
+    }, 60_000);
+  });
+  it('the mix has feasible and infeasible cases', () => {
+    log('per-part random minimum actions:', results.join(' '));
+    if (results.length < cases.length) return; // filtered run
+    expect(results.filter((b) => b < Infinity).length).toBeGreaterThanOrEqual(4);
+    expect(results.filter((b) => b === Infinity).length).toBeGreaterThanOrEqual(2);
+  });
+});

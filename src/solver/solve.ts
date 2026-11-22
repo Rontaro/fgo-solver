@@ -27,15 +27,19 @@ import { damageBound, type BoundCtx } from './bound';
  * outgoing unit never comes back, so its later state does not matter. Using it
  * before the swap is dominated.
  *
- * Last turn: every modelled effect but orderChange can only help (buffs, NP
- * charge and skill cooldown cuts on allies; nothing in the engine lowers a
- * value), so every relevant skill is used, with no skip branch.
+ * Last turn: every immediate modelled effect but orderChange can only help
+ * (buffs, NP charge and skill cooldown cuts on allies; the only thing that
+ * lowers a value, lossNp, is always deferred to a turn end, which the last
+ * turn never reaches), so every relevant skill is used, with no skip branch.
+ * Skills marked lastTurnOnly are refused by the engine on earlier turns.
  *
  * Relevance (moves that cannot matter are not tried): an effect with value 0 at
  * its level, an enemy-side effect, a buff or charge that only lands on units
  * without a damaging NP, a card buff for another card than the holder's NP, a
  * "vs trait" buff when no enemy left has the trait, npGainUp on a buster NP
- * (buster gives no NP) and, on the last turn, shortenSkill and npGainUp.
+ * (buster gives no NP), an NP drain (lossNp), a deferred effect that would
+ * only run after the last turn's NPs and, on the last turn, shortenSkill and
+ * npGainUp.
  *
  * Memo: (canonical state, position) -> explored (identical builds are
  * interchangeable, see buildOf). The subtree under a node
@@ -303,7 +307,7 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
     let k = buffKeys[wave].get(b);
     if (k === undefined) {
       const turns = b.turns < 0 ? -1 : Math.min(b.turns, left(wave));
-      k = intern(`${b.kind},${b.value},${turns},${b.count},${b.cards?.join('') ?? ''},${b.opTraits?.join('.') ?? ''}`);
+      k = intern(`${b.kind},${b.value},${turns},${b.count},${b.cards?.join('') ?? ''},${b.opTraits?.join('.') ?? ''},${b.rateOf ?? ''},${b.buffTraits ?? ''}`);
       buffKeys[wave].set(b, k);
     }
     return k;
@@ -319,6 +323,11 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
     }
     return h;
   };
+  // Deferred effects still to run before the last wave's NPs (the others never matter).
+  const pendingHash = (u: Unit, wave: number) => u.pending
+    .filter((p) => wave + p.wait <= lastWave && (u.svt.np || p.e.kind === 'shortenSkill'))
+    .map((p) => intern(`${p.e.kind},${p.v.value},${p.v.turns},${p.v.count},${p.wait},${p.times},${p.e.cards?.join('') ?? ''},${p.e.opTraits?.join('.') ?? ''},${p.e.rateOf ?? ''},${p.e.buffTraits ?? ''}`))
+    .sort((x, y) => x - y).join('.');
   // Per wave: the normalisation above depends on it.
   const unitHashes = quest.waves.map(() => new WeakMap<Unit, string>());
   // Gauge and buffs only matter on a unit with a damaging NP.
@@ -328,6 +337,7 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
     if (h === undefined) {
       h = `${buildOf.get(u.key)}:${capCd(u.cd[0], wave)},${capCd(u.cd[1], wave)},${capCd(u.cd[2], wave)}`;
       if (u.svt.np) h += `:${u.gauge}:${buffsHash(u, wave)}`;
+      if (u.pending.length) h += `:${pendingHash(u, wave)}`;
       unitHashes[wave].set(u, h);
     }
     return h;
@@ -432,7 +442,9 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
     for (const e of effects) {
       const v = e.lv[idx];
       if (e.target === 'ptOne') needTarget = true;
-      if (!v || v.value === 0 || e.kind === 'orderChange' || e.target === 'enemy' || e.target === 'enemyAll') continue;
+      if (!v || v.value === 0 || e.kind === 'orderChange' || e.kind === 'lossNp' || e.target === 'enemy' || e.target === 'enemyAll') continue;
+      // A deferred effect runs at the end of turn wave + wait - 1: too late if that is the last turn or later.
+      if (e.deferred && s.wave + (e.deferred.at === 'delay' ? e.deferred.turns : 1) > lastWave) continue;
       if (caster === null && (e.target === 'self' || e.target === 'ptOther')) continue;
       if (last && (e.kind === 'shortenSkill' || e.kind === 'npGainUp')) continue;
       if (e.opTraits && !traitAhead(s.wave, e.opTraits)) continue;
@@ -616,7 +628,7 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
     for (let i = from; i < steps.length; i++) {
       const x = steps[i];
       const sk = x.kind === 'mc' ? mc.skills[x.num! - 1] : s.front.find((u) => u?.key === x.unit)?.svt.skills.find((k) => k.num === x.num);
-      if (!sk || !sk.effects.every((e) => e.kind === 'gainNp')) continue;
+      if (!sk || !sk.effects.every((e) => e.kind === 'gainNp' && !e.deferred)) continue;
       const caster = x.kind === 'mc' ? null : s.front.find((u) => u?.key === x.unit)!;
       const idx = caster ? caster.skillLv[x.num! - 1] - 1 : mcIdx;
       if (s.wave + sk.cooldown[idx] < quest.waves.length) continue;
@@ -732,6 +744,9 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
       // A skill of a unit that has left the field cannot be delayed.
       if (x.kind === 'skill' && !end.front.some((u) => u?.key === x.unit)) continue;
       if (start.wave + cooldownOf(x, start) < quest.waves.length) continue;
+      // Deferred effects run at a turn end counted from the use: using X a turn
+      // later changes them (a delayed buff comes a turn later). Never delayed.
+      if (deferredStep(x, start)) continue;
       // The line without X is explored first (skip first). Not cached: it did
       // not clear, or a memo hit cut it short; either way, no prune (safe).
       let w = clears.get(stepsKey(steps, i));
@@ -777,6 +792,12 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
   // Gauge of units with a damaging NP (the others are not hashed either).
   const sameGauges = (a: BattleState, b: BattleState) =>
     a.front.every((u, i) => !u?.svt.np || u.gauge === b.front[i]?.gauge);
+  /** Whether the skill a step used has a deferred effect. */
+  function deferredStep(x: Step, s: BattleState): boolean {
+    if (x.kind === 'mc') return mc.skills[x.num! - 1].effects.some((e) => e.deferred);
+    const u = [...s.front, ...s.back].find((v) => v?.key === x.unit)!;
+    return !!u.svt.skills.find((k) => k.num === x.num)?.effects.some((e) => e.deferred);
+  }
   /** Base cooldown of the skill a step used. */
   function cooldownOf(x: Step, s: BattleState): number {
     if (x.kind === 'mc') return mc.skills[x.num! - 1].cooldown[mcIdx];
