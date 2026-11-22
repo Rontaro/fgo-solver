@@ -22,7 +22,10 @@ async function get(path) {
 // The exports only carry the triggered skill's id, so each one is fetched once
 // from /nice/{region}/skill/{id}, sequentially, and cached on disk keyed by the
 // Atlas data hash: reruns on the same data version make no skill requests.
-const CACHE_DIR = 'node_modules/.cache/fgo-solver';
+// The cache is committed (data-cache/), so a CI / Cloudflare build makes none
+// either while the Atlas data has not changed; after a game update, run
+// `npm run data` locally and commit the refreshed files.
+const CACHE_DIR = 'data-cache';
 const TRIGGER_DEPTH = 2; // same limit as compact.ts: a trigger inside a triggered skill
 
 function* functionsOf(entities) {
