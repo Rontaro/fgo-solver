@@ -2,7 +2,7 @@ import { DEFAULT_FORM } from '../data/forms';
 import { getSettings } from '../app/settings';
 import { useEffect, useMemo, useState } from 'react';
 import type { CompactCE, CompactMC, CompactServant } from '../data/types';
-import type { OwnedServant } from '../roster/types';
+import type { OwnedCE, OwnedServant } from '../roster/types';
 import { isDefaultOwned } from '../roster/defaults';
 import { FaceIcon } from '../app/ServantIcon';
 import { useT } from '../i18n';
@@ -10,17 +10,19 @@ import { CePicker, type CeValue } from './CePicker';
 import { addRecent, availablePresets, loadRecent, partialParts, PRESET_SLOTS, saveRecent } from './picker';
 import { ServantPicker, type PickerTab } from './ServantPicker';
 
-export type SlotKind = 'empty' | 'roster' | 'support' | 'free' | 'supportAuto';
+export type SlotKind = 'empty' | 'roster' | 'support' | 'free' | 'supportAuto' | 'list';
 export interface SlotState {
   kind: SlotKind; collectionNo: number | null; ceNo: number | null; ceLv: number; ceMlb: boolean;
   /** Starting form of a servant with forms (data/forms.ts); absent = DEFAULT_FORM. */
   form?: 'low' | 'high';
+  /** kind 'list': the servants to try in this slot, one by one (roster or support). */
+  list?: { tab: 'roster' | 'support'; no: number }[];
 }
 export const emptySlot = (): SlotState => ({ kind: 'empty', collectionNo: null, ceNo: null, ceLv: 100, ceMlb: false });
 
 const inp = 'rounded border border-night-700 bg-night-800 px-2 py-1 text-sm';
 const KIND_CLS: Record<SlotKind, string> = {
-  empty: 'text-night-500', roster: 'text-gold-300', support: 'text-emerald-300', free: 'text-amber-300', supportAuto: 'text-amber-300',
+  empty: 'text-night-500', roster: 'text-gold-300', support: 'text-emerald-300', free: 'text-amber-300', supportAuto: 'text-amber-300', list: 'text-quick',
 };
 
 interface Props {
@@ -31,11 +33,15 @@ interface Props {
   isAuto: boolean; defaultMaxS: number;
   /** Saves the current team (Teams tab); absent = no button. */
   onSaveTeam?: () => void;
+  /** CEs of the roster: picking one takes its level and MLB. */
+  ownedCes?: readonly OwnedCE[];
+  /** CEs tied to the chosen quest (eventCesFor). */
+  eventCes?: readonly CompactCE[];
 }
 
-type Picking = { slot: number; what: 'servant' | 'ce' };
+type Picking = { slot: number; what: 'servant' | 'ce' | 'list' };
 
-export function TeamBuilder({ slots, setSlots, servants, ces, mcs, owned, mcId, setMcId, maxS, setMaxS, isAuto, defaultMaxS, onSaveTeam }: Props) {
+export function TeamBuilder({ slots, setSlots, servants, ces, mcs, owned, mcId, setMcId, maxS, setMaxS, isAuto, defaultMaxS, onSaveTeam, ownedCes = [], eventCes = [] }: Props) {
   const tt = useT();
   const t = tt.team;
   const sup = getSettings().support;
@@ -96,13 +102,27 @@ export function TeamBuilder({ slots, setSlots, servants, ces, mcs, owned, mcId, 
           <>
             <div className="fixed inset-0 z-10" onClick={() => setMenu(null)} />
             <div role="menu" className="absolute right-2 top-8 z-20 w-52 overflow-hidden rounded border border-night-700 bg-night-900 text-sm shadow-lg">
-              {([['empty', t.clear], ['free', t.makeFree], ['supportAuto', t.makeSupportAuto]] as [SlotKind, string][]).map(([k, text]) => (
-                <button key={k} type="button" role="menuitem" onClick={() => { setSlots(slots.map((x, j) => (j === i ? { ...emptySlot(), kind: k } : x))); setMenu(null); }}
+              {([['empty', t.clear], ['free', t.makeFree], ['supportAuto', t.makeSupportAuto], ['list', t.makeList]] as [SlotKind, string][]).map(([k, text]) => (
+                <button key={k} type="button" role="menuitem" onClick={() => {
+                  setSlots(slots.map((x, j) => (j === i ? { ...emptySlot(), kind: k, ...(k === 'list' && { list: [] }) } : x)));
+                  setMenu(null);
+                  if (k === 'list') setPicking({ slot: i, what: 'list' });
+                }}
                   className="block w-full px-3 py-2 text-left text-night-200 hover:bg-night-800">{text}</button>
               ))}
             </div>
           </>
         )}
+        {s.kind === 'list' ? (
+          <button type="button" onClick={() => setPicking({ slot: i, what: 'list' })} title={t.editList(label(i))}
+            className="flex flex-col gap-1 rounded p-1 text-left hover:bg-night-700/60">
+            <span className="flex flex-wrap gap-1">
+              {(s.list ?? []).map((x) => { const lv = servants.get(x.no); return lv ? <FaceIcon key={`${x.tab}${x.no}`} face={lv.face} name={lv.name} size={32} /> : null; })}
+              {!(s.list ?? []).length && <span className="flex h-8 w-8 items-center justify-center rounded-md border-2 border-dashed border-quick/60 text-quick">+</span>}
+            </span>
+            <span className="text-xs text-night-400">{t.listHint((s.list ?? []).length)}</span>
+          </button>
+        ) : (
         <button type="button" onClick={() => setPicking({ slot: i, what: 'servant' })} title={t.pickServant(label(i))}
           className="flex items-center gap-2 rounded p-1 text-left hover:bg-night-700/60">
           {locked ? <FaceIcon face={v.face} name={v.name} size={56} />
@@ -126,6 +146,7 @@ export function TeamBuilder({ slots, setSlots, servants, ces, mcs, owned, mcId, 
             ) : <span className="block text-night-400">{auto ? t.anyHint : t.addServant}</span>}
           </span>
         </button>
+        )}
         {locked && v.forms && (
           <label className="flex items-center gap-2 px-1 text-xs text-night-300">{t.startForm}
             <select className={inp} value={s.form ?? DEFAULT_FORM}
@@ -135,7 +156,7 @@ export function TeamBuilder({ slots, setSlots, servants, ces, mcs, owned, mcId, 
             </select>
           </label>
         )}
-        {locked && (
+        {(locked || (s.kind === 'list' && (s.list ?? []).length > 0)) && (
           <button type="button" onClick={() => setPicking({ slot: i, what: 'ce' })} title={t.pickCe(label(i))}
             className="flex items-center gap-2 rounded border-t border-night-700/60 p-1 pt-2 text-left hover:bg-night-700/60">
             {ce ? <FaceIcon face={ce.face} name={ce.name} size={32} />
@@ -194,8 +215,18 @@ export function TeamBuilder({ slots, setSlots, servants, ces, mcs, owned, mcId, 
           initialTab={ps.kind === 'support' || ps.kind === 'supportAuto' || owned.length === 0 ? 'support' : 'roster'}
           onPick={(tab, no) => pickServant(p.slot, tab, no)} onClose={() => setPicking(null)} />
       )}
+      {p && ps && p.what === 'list' && (
+        <ServantPicker title={t.editList(label(p.slot))} servants={servants} owned={owned} usedRoster={usedRoster(p.slot)}
+          initialTab={owned.length === 0 ? 'support' : 'roster'} selected={ps.list ?? []}
+          onPick={(tab, no) => {
+            const cur = ps.list ?? [];
+            const has = cur.some((x) => x.tab === tab && x.no === no);
+            update(p.slot, { list: has ? cur.filter((x) => !(x.tab === tab && x.no === no)) : [...cur, { tab, no }] });
+          }}
+          onClose={() => setPicking(null)} />
+      )}
       {p && ps && p.what === 'ce' && (
-        <CePicker title={t.pickCe(label(p.slot))} ces={ces} value={ps as CeValue}
+        <CePicker title={t.pickCe(label(p.slot))} ces={ces} value={ps as CeValue} ownedCes={ownedCes} eventCes={eventCes}
           onChange={(patch) => update(p.slot, patch)} onClose={() => setPicking(null)} />
       )}
     </section>

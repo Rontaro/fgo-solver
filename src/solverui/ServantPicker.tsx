@@ -15,11 +15,13 @@ const byUsableThenRarity = (a: CompactServant, b: CompactServant) =>
   Number(!isUsable(a)) - Number(!isUsable(b)) || compareServants(a, b);
 
 /** Servant grid with roster / support tabs, search and class / type chips. */
-export function ServantPicker({ title, initialTab, servants, owned, usedRoster, onPick, onClose }: {
+export function ServantPicker({ title, initialTab, servants, owned, usedRoster, onPick, onClose, selected }: {
   title: string; initialTab: PickerTab; servants: ReadonlyMap<number, CompactServant>; owned: readonly OwnedServant[];
   /** Roster servants already in another slot (one copy each). */
   usedRoster: ReadonlySet<number>;
   onPick: (tab: PickerTab, collectionNo: number) => void; onClose: () => void;
+  /** Multi-select mode (list slot): the picks so far; onPick toggles one and the picker stays open. */
+  selected?: readonly { tab: PickerTab; no: number }[];
 }) {
   const tt = useT();
   const t = tt.picker;
@@ -55,8 +57,12 @@ export function ServantPicker({ title, initialTab, servants, owned, usedRoster, 
     return (
       <ServantTile key={s.collectionNo} s={s} disabled={!!why} title={why ? `${s.name}: ${why}` : s.name}
         onClick={() => onPick(tab, s.collectionNo)}
-        corners={tab === 'support' && ownedSet.has(s.collectionNo)
-          ? <Corner pos="tr" cls="bg-gold-500 !text-night-950" label={tt.catalog.inRoster}>✓</Corner> : undefined}
+        corners={<>
+          {selected?.some((x) => x.tab === tab && x.no === s.collectionNo)
+            && <Corner pos="tl" cls="bg-quick !text-night-950" label={t.selected}>✓</Corner>}
+          {tab === 'support' && ownedSet.has(s.collectionNo)
+            && <Corner pos="tr" cls="bg-gold-500 !text-night-950" label={tt.catalog.inRoster}>✓</Corner>}
+        </>}
         sub={(o || parts.length > 0) && (
           <span className="flex flex-col items-center gap-0.5">
             {o && <span>lv {o.lv} · NP{o.npLv}<br />{o.skillLv.join('/')}</span>}
@@ -73,6 +79,12 @@ export function ServantPicker({ title, initialTab, servants, owned, usedRoster, 
 
   return (
     <Modal title={title} onClose={onClose}>
+      {selected && (
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-gold-500/30 bg-night-950/60 px-3 py-2 text-sm">
+          <span className="text-night-200">{t.listHelp(selected.length)}</span>
+          <button type="button" onClick={onClose} className="btn-primary ml-auto px-3 py-1 text-xs">{t.done}</button>
+        </div>
+      )}
       <div className="flex rounded bg-night-800 p-0.5 text-sm" role="tablist">
         {(['roster', 'support'] as const).map((k) => (
           <button key={k} type="button" role="tab" aria-selected={tab === k} onClick={() => setTab(k)}

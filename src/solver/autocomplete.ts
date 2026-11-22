@@ -30,7 +30,17 @@ import { solve as realSolve, type Solution, type SolveResult } from './solve';
  * maxPerTeam is the bound there.
  */
 
-export type Slot = { locked: TeamMember } | { free: true } | { support: true };
+/** pool: the user's own short list for this slot, each tried in turn (in list order). */
+export type Slot = { locked: TeamMember } | { free: true } | { support: true } | { pool: readonly TeamMember[] };
+
+/** Every way to pick one member per pool slot (no member twice), in list order. */
+function poolPicks(pools: readonly (readonly TeamMember[])[]): TeamMember[][] {
+  let out: TeamMember[][] = [[]];
+  for (const pool of pools) {
+    out = out.flatMap((pick) => pool.filter((m) => !pick.some((x) => sameMember(x, m))).map((m) => [...pick, m]));
+  }
+  return out;
+}
 
 export interface AutocompleteOptions {
   maxMs: number;
@@ -152,7 +162,13 @@ export async function autocomplete(req: AutocompleteRequest, deps: AutocompleteD
   const locked = slots.flatMap((s) => ('locked' in s ? [s.locked] : []));
   const nFree = slots.filter((s) => 'free' in s).length;
   const nSupport = slots.filter((s) => 'support' in s).length;
-  const combos = combinations(candidates(req.roster, locked, max), nFree, candidates(req.supportPool, locked, max), nSupport);
+  const pools = slots.flatMap((s) => ('pool' in s ? [s.pool] : []));
+  const picks = poolPicks(pools);
+  // Free / support picks never repeat a member of a pool slot's list (candidates exclude it).
+  const listed = pools.flat();
+  const base = combinations(candidates(req.roster, [...locked, ...listed], max), nFree, candidates(req.supportPool, [...locked, ...listed], max), nSupport);
+  const combos = picks.filter((pick) => !pick.some((m) => locked.some((l) => sameMember(l, m))))
+    .flatMap((pick) => base.map((c) => ({ ...c, pool: pick })));
 
   const results: AutocompleteResult['results'] = [];
   let triedTeams = 0;
@@ -164,10 +180,11 @@ export async function autocomplete(req: AutocompleteRequest, deps: AutocompleteD
 
     const combo = combos[c];
     // Picks are already in descending score order (candidate lists are sorted, subsets lexicographic).
-    const freePicks = [...combo.free], supportPicks = [...combo.support];
+    const freePicks = [...combo.free], supportPicks = [...combo.support], listPicks = [...combo.pool];
     const team: TeamMember[] = [];
     for (const s of slots) {
-      const m = 'locked' in s ? s.locked : ('free' in s ? freePicks.shift() : supportPicks.shift())?.m;
+      const m = 'locked' in s ? s.locked : 'pool' in s ? listPicks.shift()
+        : ('free' in s ? freePicks.shift() : supportPicks.shift())?.m;
       if (m) team.push(m);
     }
 

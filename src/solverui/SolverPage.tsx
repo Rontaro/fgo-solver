@@ -4,12 +4,13 @@ import { useRegionData } from '../app/RegionData';
 import type { CompactMC } from '../data/types';
 import type { TeamMember } from '../engine/state';
 import { IdbRosterStore } from '../roster/store';
-import type { OwnedServant } from '../roster/types';
+import type { OwnedCE, OwnedServant } from '../roster/types';
 import { compareSolutions, type NearMiss, type Partial, type Solution, type SolveStats } from '../solver/solve';
 import type { Slot } from '../solver/autocomplete';
 import type { InMsg, OutMsg, Progress } from '../solver/worker-handler';
 import { defaultMc, describeTurns, formatTurns, ownedToMember, slotEnemyNames, supportMember, SUPPORT_POOL_CAP, type CeChoice } from './members';
 import { QuestPicker, type PickedQuest, type QuestPreset } from './QuestPicker';
+import { eventCesFor } from './eventCes';
 import { addResult, addTeam, type SavedQuest } from '../saved/store';
 import { dataVersionOf, toSavedMember } from '../saved/verify';
 import { emptySlot, TeamBuilder, type SlotState } from './TeamBuilder';
@@ -37,6 +38,7 @@ export function SolverPage({ load }: { load?: SolverLoad | null }) {
   const tt = useT();
   const t = tt.solver;
   const [owned, setOwned] = useState<OwnedServant[]>([]);
+  const [ownedCes, setOwnedCes] = useState<OwnedCE[]>([]);
   const [quest, setQuest] = useState<PickedQuest | null>(null);
   const [slots, setSlots] = useState<SlotState[]>(() => Array.from({ length: 6 }, emptySlot));
   const [mcId, setMcId] = useState<number | null>(null);
@@ -68,7 +70,7 @@ export function SolverPage({ load }: { load?: SolverLoad | null }) {
 
   useEffect(() => {
     let alive = true;
-    store.load(region).then((d) => { if (alive) setOwned(d.servants); });
+    store.load(region).then((d) => { if (alive) { setOwned(d.servants); setOwnedCes(d.ces); } });
     return () => { alive = false; };
   }, [region]);
   useEffect(() => { if (data && mcId === null) setMcId(defaultMc(data.mcs)?.id ?? null); }, [data, mcId]);
@@ -77,6 +79,9 @@ export function SolverPage({ load }: { load?: SolverLoad | null }) {
   const sorted = useMemo(() => [...found].sort((a, b) => compareSolutions(a.solution, b.solution)).slice(0, MAX_SHOWN), [found]);
   if (!data) return null;
   const mc = data.mcs.find((m) => m.id === mcId);
+  // Event bonus CEs of the chosen node, and the ones the team does not use yet (improvement hint).
+  const eventCes = quest ? eventCesFor(data.ces, quest.raw, quest.eventId) : [];
+  const unusedEventCes = eventCes.filter((c) => !slots.some((s) => s.ceNo === c.collectionNo));
 
   const ceOf = (s: SlotState): CeChoice => ({ ce: s.ceNo === null ? null : data.ces.find((c) => c.collectionNo === s.ceNo) ?? null, lv: s.ceLv, mlb: s.ceMlb });
   const memberOf = (s: SlotState, i: number): TeamMember | null => {
@@ -89,13 +94,14 @@ export function SolverPage({ load }: { load?: SolverLoad | null }) {
 
   const locked = slots.map(memberOf);
   const keys = locked.flatMap((m) => (m ? [m.key] : []));
-  const isAuto = slots.some((s) => s.kind === 'free' || s.kind === 'supportAuto');
+  const isAuto = slots.some((s) => s.kind === 'free' || s.kind === 'supportAuto' || s.kind === 'list');
   const maxS = maxSOverride ?? defaultMaxS(isAuto);
   const problem = !quest ? t.noQuest
     : quest.unsupported ? t.unsupportedNode
     : !mc ? t.noMc
     : new Set(keys).size !== keys.length ? t.dupServant
     : slots.some((s, i) => (s.kind === 'roster' || s.kind === 'support') && !locked[i]) ? t.incomplete
+    : slots.some((s) => s.kind === 'list' && !(s.list ?? []).length) ? t.emptyList
     : !isAuto && keys.length === 0 ? t.emptyTeam
     : null;
 
@@ -118,8 +124,16 @@ export function SolverPage({ load }: { load?: SolverLoad | null }) {
       const roster = owned.filter((o) => ok(o.collectionNo)).map((o) => add(ownedToMember(o, data.servants.get(o.collectionNo)!, `r${o.collectionNo}`)));
       const supportPool = [...data.servants.values()].filter((s) => s.unsupported.length === 0).slice(0, SUPPORT_POOL_CAP)
         .map((s) => add(supportMember(s, `p${s.collectionNo}`)));
+      // A list slot: its servants, each as a member (roster stats or support defaults), with the slot's CE and form.
+      const listMembers = (s: SlotState, i: number): TeamMember[] => (s.list ?? []).flatMap(({ tab, no }) => {
+        const svt = data.servants.get(no);
+        const o = owned.find((x) => x.collectionNo === no);
+        if (!svt) return [];
+        return [add(tab === 'roster' && o ? ownedToMember(o, svt, `r${no}`, ceOf(s), s.form) : supportMember(svt, `l${i}-${no}`, ceOf(s), s.form))];
+      });
       const acSlots: Slot[] = slots.flatMap((s, i): Slot[] => (locked[i] ? [{ locked: locked[i]! }]
-        : s.kind === 'free' ? [{ free: true }] : s.kind === 'supportAuto' ? [{ support: true }] : []));
+        : s.kind === 'free' ? [{ free: true }] : s.kind === 'supportAuto' ? [{ support: true }]
+        : s.kind === 'list' ? [{ pool: listMembers(s, i) }] : []));
       msg = { type: 'solve', id, payload: { ...common, kind: 'autocomplete', slots: acSlots, roster, supportPool,
         maxPerTeam: Math.max(1000, Math.min(5000, common.maxMs / 10)) } };
     } else {
@@ -206,7 +220,7 @@ export function SolverPage({ load }: { load?: SolverLoad | null }) {
     <div className="space-y-4">
       <QuestPicker region={region} wars={data.quests} onChange={setQuest} preset={preset} />
       <TeamBuilder slots={slots} setSlots={setSlots} servants={data.servants} ces={data.ces} mcs={data.mcs} owned={owned}
-        mcId={mcId} setMcId={setMcId} maxS={maxS} setMaxS={setMaxS} isAuto={isAuto} defaultMaxS={defaultMaxS(isAuto)} onSaveTeam={saveTeam} />
+        mcId={mcId} setMcId={setMcId} maxS={maxS} setMaxS={setMaxS} isAuto={isAuto} defaultMaxS={defaultMaxS(isAuto)} onSaveTeam={saveTeam} ownedCes={ownedCes} eventCes={eventCes} />
       {note && <p role="status" className="text-sm text-gold-300">{note}</p>}
       <section className={`panel space-y-4 ${sorted.length > 0 ? 'border-gold-500 shadow-[0_0_40px_rgba(217,184,108,0.12)]' : ''}`}>
         <h2 className="flex items-baseline gap-3"><span className="panel-num" aria-hidden="true">III</span><span className="panel-title">{t.heading}</span></h2>
@@ -239,6 +253,12 @@ export function SolverPage({ load }: { load?: SolverLoad | null }) {
               ? t.missingDamage(best.wave, (best.missingDamagePct * 100).toFixed(1))
               : t.npNotCharged(best.wave)) : ''}
           </p>
+        )}
+        {!running && run && found.length === 0 && !error && unusedEventCes.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-gold-500/30 bg-night-950/60 p-3 text-sm">
+            <span className="text-gold-300">{t.eventCeHint}</span>
+            {unusedEventCes.slice(0, 8).map((c) => <FaceIcon key={c.collectionNo} face={c.face} name={c.name} size={32} />)}
+          </div>
         )}
         {!running && run && found.length === 0 && !error && closest && (
           <div className="space-y-3 rounded-lg border border-amber-500/40 bg-night-950/60 p-4 text-sm">

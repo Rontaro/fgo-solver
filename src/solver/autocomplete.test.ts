@@ -83,6 +83,15 @@ describe('autocomplete', () => {
     expect(sp.teams[0][2].key).toBe('m200');
   });
 
+  it('list slots try each listed member in turn, never one twice', async () => {
+    const a = bat(300, 100), b = bat(301, 100), c = bat(302, 100);
+    const slots: Slot[] = [{ locked: alt }, { pool: [a, b] }, { pool: [b, c] }, filler(101), filler(102), filler(103)];
+    const sp = spy();
+    const r = await autocomplete(req(slots, { roster: [] }), { solve: sp.solve, yieldNow });
+    expect(sp.teams.map((t) => [t[1].key, t[2].key])).toEqual([['m300', 'm301'], ['m300', 'm302'], ['m301', 'm302']]);
+    expect(r.triedTeams).toBe(3);
+  });
+
   it('cancel stops early', async () => {
     const cancel = { cancelled: false };
     const r = await autocomplete(req(twoFree, { opts: { maxMs: 10_000, maxPerTeam: 1000, cancel, onSolution: () => { cancel.cancelled = true; } } }), { yieldNow });
