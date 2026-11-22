@@ -23,6 +23,10 @@ export type EffectKind =
   // Self HP loss (Atlas lossHp, an NP / skill demerit): the unit must not die
   // of it (CompactServant.hp, no HP fou counted).
   | 'lossHp'
+  // The holder dies (Atlas forceInstantDeath on self, e.g. Arash's NP): its
+  // slot is empty until the next turn starts, when the first back-line unit
+  // takes it (Chaldea _replenishActors).
+  | 'selfDeath'
   // Debuffs on enemies (target enemy / enemyAll), see Enemy.debuffs in the
   // engine: DEF down (Atlas downDefence) and card resistance down
   // (downDefencecommandall, Effect.cards = the attacking cards it applies to).

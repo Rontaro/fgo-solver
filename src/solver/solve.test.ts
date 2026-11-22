@@ -6,6 +6,8 @@ import { solve, replay, simulate, type Solution, type SolveOptions } from './sol
 import { bruteMinActions } from './brute-reference';
 import { initBattle } from '../engine/state';
 import { fireNp } from '../engine/np';
+import arashRaw from '../../test/fixtures/arash.json';
+import { compactServant } from '../data/compact';
 
 // Stats output only with SOLVER_LOG=1 (like the engine benchmark's BENCH=1).
 const env = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env ?? {};
@@ -270,6 +272,28 @@ describe('solve: regressions', () => {
     const bat = supp(9112, skill(1, 7, eff('gainNp', 'ptOne', 10000), eff('lossNp', 'ptOne', 5000)), skill(2, 7, eff('gainNp', 'ptOne', 5000)));
     const team = [member({ ...altria, skills: [] }, 'alt', { npLv: 5 }), member(bat, 'bat')];
     expect(againstBrute(team, quest([1000]), mcCombat)).toBe(2);
+  });
+  it('Arash dies with his NP; the back-line unit takes his slot next turn', () => {
+    const arash = compactServant(arashRaw as any);
+    expect(arash.np?.unsupported).toBeUndefined();
+    expect(arash.np?.extra).toContainEqual(expect.objectContaining({ kind: 'selfDeath', target: 'self' }));
+    // Wave 1: Arash (Kaleidoscope) clears; waves 2-3: Altria from the back,
+    // charged by the battery (S1 100% on turn 2, S2 100% on turn 3).
+    const bat = supp(9121, skill(1, 7, eff('gainNp', 'ptOne', 10000)), skill(2, 7, eff('gainNp', 'ptOne', 10000)));
+    const team = [
+      member(arash, 'arash', { npLv: 5, ce: kaleidoscope, ceLv: 100, ceMlb: true }), member(bat, 'bat'),
+      member({ ...altria, skills: [] }, 'alt', { npLv: 5 }),
+    ];
+    const q = quest([1000], [1000], [1000]);
+    // Arash is front slot 1 (index 0), Altria the first back unit: no third front member.
+    const full = [team[0], team[1], member(bat, 'bat2'), team[2]];
+    const r = run(full, mcCombat, q);
+    expect(r.solutions.length).toBeGreaterThan(0);
+    checkSolutions(full, mcCombat, q, r.solutions);
+    const sol = r.solutions[0];
+    expect(sol.turns[0]).toContainEqual({ kind: 'np', unit: 'arash' });
+    expect(sol.turns[1]).toContainEqual({ kind: 'np', unit: 'alt' });
+    expect(sol.usesSwap).toBe(false);
   });
   it('shortenSkill moves come last whatever the slot order', () => {
     const C = supp(9201, skill(1, 3, eff('gainNp', 'ptOne', 5000)));

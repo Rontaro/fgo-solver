@@ -1,7 +1,7 @@
 import type { Effect, LevelVal, NoblePhantasm } from '../data/types';
 import { npDamage } from './damage';
 import { splitHits, hitsOnEnemy, npRefund } from './npgain';
-import { applyEffect, canNp, mods, buffApplies, gaugeCap, livingSlots, refillField, chooseTarget, npTarget, debuffSum, consumeDebuffs, type BattleState, type Buff, type EffectDraft, type Enemy } from './state';
+import { applyEffect, canNp, syncAuras, mods, buffApplies, gaugeCap, livingSlots, refillField, chooseTarget, npTarget, debuffSum, consumeDebuffs, type BattleState, type Buff, type EffectDraft, type Enemy } from './state';
 
 export interface NpResult { state: BattleState; killedAll: boolean; minMargin: number; }
 
@@ -139,5 +139,8 @@ export function fireNp(state: BattleState, unitKey: string, targetIndex?: number
   // enemies holds the reserve too (full HP until it enters): every enemy dead
   // means field and reserve are empty.
   const after = post.enemies!;
-  return { state: refillField({ ...state, front, enemies: after, npsFired: state.npsFired + 1 }), killedAll: after.every((e) => e.hp <= 0), minMargin };
+  // A unit that died (selfDeath) takes its auras with it.
+  const died = front.some((x, i) => !x && state.front[i]);
+  const next = refillField({ ...state, front, enemies: after, npsFired: state.npsFired + 1 });
+  return { state: died ? syncAuras(next) : next, killedAll: after.every((e) => e.hp <= 0), minMargin };
 }

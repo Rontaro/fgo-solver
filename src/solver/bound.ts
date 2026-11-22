@@ -68,12 +68,16 @@ export function damageBound(s: BattleState, c: BoundCtx): BoundFail | null {
   const { quest } = c;
   const T = s.wave;
   const front = s.front.filter((u): u is Unit => u !== null);
+  const mayDie = front.some((u) => [...u.svt.skills.flatMap((k) => k.effects), ...(u.svt.np?.extra ?? [])].some((e) => e.kind === 'selfDeath'));
   for (let W = T; W < quest.waves.length; W++) {
     // One order change per battle: at most one back unit ever joins.
     const swapOpen = !s.swapped && s.back.length > 0 &&
       c.swapMcs.some((i) => usesUntil(T, W, s.mcCd[i], 1, false) > 0);
     let missing = missingWith(front, W);
     if (swapOpen) for (const b of s.back) if (missing > 0) missing = Math.min(missing, missingWith([...front, b], W));
+    // A unit that can die (selfDeath) lets back-line units in on later turns:
+    // the whole party is the (optimistic) pool.
+    if (missing > 0 && W > T && s.back.length && mayDie) missing = Math.min(missing, missingWith([...front, ...s.back], W));
     if (missing > 0) return { wave: W, missing };
   }
   return null;

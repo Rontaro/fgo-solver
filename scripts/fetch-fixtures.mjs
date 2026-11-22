@@ -11,6 +11,7 @@ const files = {
   'super-orion.json': '/nice/NA/servant/272?lore=false', // trigger buff -> skill 964095
   'ereshkigal.json': '/nice/NA/servant/196?lore=false', // Ghost Room golden test
   'ishtar.json': '/nice/NA/servant/142?lore=false', // delayFunction S3 (skill 960408)
+  'arash.json': '/nice/NA/servant/201300?lore=false', // NP: self death (selfDeath), a 0-value damage function
   'oberon.json': '/nice/NA/servant/316?lore=false', // buffRate, end-of-turn triggers (966456, 966458)
   // Chaldea battle_test.dart scenarios (JP data, as Chaldea's own game data).
   'jp-altria.json': '/nice/JP/servant/100100?lore=false',

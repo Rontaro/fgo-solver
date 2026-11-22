@@ -272,7 +272,7 @@ export const canSkill = (u: Unit): boolean => !u.buffs.some((b) => b.kind === 's
  * stun, a negative value. The solver never assumes such a move only helps.
  */
 export const isHarmful = (e: Effect): boolean =>
-  (e.kind === 'lossNp' && !e.deferred) || e.kind === 'lossHp' || CONTROL.has(e.kind) || e.lv.some((v) => v.value < 0);
+  (e.kind === 'lossNp' && !e.deferred) || e.kind === 'lossHp' || e.kind === 'selfDeath' || CONTROL.has(e.kind) || e.lv.some((v) => v.value < 0);
 const MOD_FIELD: Record<Exclude<BuffKind, 'buffRate' | 'sealNp' | 'sealSkill' | 'stun'>, keyof Mods> = {
   atkUp: 'atkMod', cardUp: 'cardMod', npDmgUp: 'npDmgMod', powerUp: 'powerMod',
   npGainUp: 'npGainMod', ocUp: 'ocUp', dmgPlus: 'dmgPlus',
@@ -387,6 +387,11 @@ export function applyEffect(d: EffectDraft, e: Effect, v: LevelVal, casterKey: s
   // behind deferred effects, are dropped; a deferred NP drain is kept (conservative).
   if (casterKey !== null && (isBuffKind(e.kind) || (e.deferred && e.kind !== 'lossNp')) && f.find((x) => x?.key === casterKey)?.castBlocked) return;
   const on = (i: number) => { f[i] = effectOn(f[i]!, e, v); };
+  if (e.kind === 'selfDeath') {
+    if (e.target !== 'self' || casterKey === null) throw new Error('selfDeath on another target');
+    f[frontIndex(f, casterKey)] = null;
+    return;
+  }
   switch (e.target) {
     case 'self':
       if (casterKey === null) throw new Error('self target without a caster');
@@ -499,7 +504,7 @@ export function initBattle(members: readonly TeamMember[], mc: CompactMC, mcLv: 
  * and in `dormant` otherwise. Called whenever the front line changes (battle
  * start, order change). Units without auras keep their identity.
  */
-function syncAuras<S extends { front: readonly (Unit | null)[]; back: readonly Unit[] }>(s: S): S {
+export function syncAuras<S extends { front: readonly (Unit | null)[]; back: readonly Unit[] }>(s: S): S {
   const all = [...s.front, ...s.back];
   if (!all.some((u) => u && (u.dormant?.length || u.buffs.some((b) => b.src)))) return s;
   const onField = new Set(s.front.filter((u): u is Unit => u !== null).map((u) => u.key));
@@ -615,10 +620,18 @@ export function nextWave(state: BattleState, quest: Quest, constants: Constants)
   if (!enemies) throw new Error('no next wave');
   const units = [...state.front.filter((u): u is Unit => u !== null), ...state.back];
   const lay = layoutOf(quest, state.wave + 1);
-  return {
-    ...state, wave: state.wave + 1, enemies, ...waveState(lay),
+  // Turn start: empty front slots (a unit died) take the back line in order
+  // (Chaldea _replenishActors).
+  let front = state.front, back = state.back;
+  if (front.some((u) => !u) && back.length) {
+    const f = front.slice(), b = back.slice();
+    for (let i = 0; i < f.length && b.length; i++) if (!f[i]) f[i] = b.shift()!;
+    front = f; back = b;
+  }
+  return syncAuras({
+    ...state, front, back, wave: state.wave + 1, enemies, ...waveState(lay),
     aff: affTable(constants, units, enemies),
-  };
+  });
 }
 
 /** True when the buff counts for this card against this enemy. */

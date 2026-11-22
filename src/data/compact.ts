@@ -297,6 +297,8 @@ function classify(f: any, ctx: Ctx = { depth: 0, flip: false }): Class {
   if (side === 'ally' && FUNC_KIND[f.funcType]) return { cls: 'apply', kind: FUNC_KIND[f.funcType] };
   // Inside a deferred (end-of-turn) effect only: see EffectKind 'lossNp'.
   if (side === 'ally' && ctx.allowLoss && f.funcType === 'lossNp') return { cls: 'apply', kind: 'lossNp' };
+  // The holder's own death (Arash's NP): a demerit.
+  if (side === 'ally' && ctx.depth === 0 && !ctx.flip && f.funcType === 'forceInstantDeath' && f.funcTargetType === 'self') return { cls: 'apply', kind: 'selfDeath', demerit: true };
   // Immediate NP loss on our side (a skill / NP demerit).
   if (side === 'ally' && ctx.depth === 0 && !ctx.flip && f.funcType === 'lossNp') return { cls: 'apply', kind: 'lossNp', demerit: true };
   if (side === 'ally' && f.funcType === 'gainNpBuffIndividualSum') return { cls: 'ignore', drop: 'func:gainNpBuffIndividualSum' };
@@ -546,7 +548,7 @@ export function convertFunctions(funcs: any[], unsupported: string[], opts: Conv
       // Certain whatever its Rate (pessimistic): seals / stun count 1, an ATK
       // down is a negative atkUp, an NP loss its value. No condition kept.
       const lvAll = (set: any[]) => set.map((v) => ({
-        value: CONTROL_KINDS.has(c.kind) ? 1 : c.kind === 'atkUp' ? -Math.abs(v.Value ?? 0) : Math.abs(v.Value ?? 0),
+        value: CONTROL_KINDS.has(c.kind) || c.kind === 'selfDeath' ? 1 : c.kind === 'atkUp' ? -Math.abs(v.Value ?? 0) : Math.abs(v.Value ?? 0),
         turns: v.Turn ?? -1, count: v.Count ?? -1,
       }));
       const e: Effect = { kind: c.kind, target: TARGET[f.funcTargetType], lv: lvAll(svals) };
@@ -674,8 +676,13 @@ function npOf(svt: any, servantLevel: string[], base: ConvOpts, report?: PartDro
     };
   }
   if (ocs.some((oc) => oc.some((v) => (v.Rate ?? 1000) < 1000))) unsupported.push('np:rate');
-  // Any other damageNp* in the list is reported unsupported by convertFunctions.
-  const extra = convertFunctions(np.functions, unsupported, { ...base, npDamage: dmg, npExtras: true, drops });
+  // Any other damageNp* in the list is reported unsupported by convertFunctions,
+  // except a second plain damageNp on the enemies (Arash: 0 at OC1, more with
+  // overcharge): extra damage, dropped (an under-estimate) and reported.
+  const extraDmg = (f: any) => f !== dmg && f.funcType === 'damageNp' && (f.funcTargetType === 'enemy' || f.funcTargetType === 'enemyAll')
+    && f.funcTargetTeam !== 'player';
+  if (np.functions.some(extraDmg)) drops.push('func:damageNp:extra');
+  const extra = convertFunctions(np.functions.filter((f: any) => !extraDmg(f)), unsupported, { ...base, npDamage: dmg, npExtras: true, drops });
   if (drops.length) report?.push({ part: 'np', drops: uniq(drops) });
   return {
     card,
