@@ -44,6 +44,42 @@ export interface Enemy {
   readonly traits: readonly number[]; readonly tdRate: number;
   /** Defence up from its passives (permille, upDefence), and flat damage cut (subSelfdamage). */
   readonly defUp?: number; readonly dmgCut?: number;
+  /**
+   * A passive of it (or of its wave) gives debuff immunity or resistance
+   * (avoidState, upTolerance...): our debuffs are never applied to it
+   * (Chaldea: Rate + grant chance - resist must reach 1000; we do not count
+   * the resist, so we skip the enemy).
+   */
+  readonly noDebuff?: true;
+  /** Our debuffs on it (only within its wave: every wave dies on its turn). */
+  readonly debuffs?: readonly EnemyDebuff[];
+}
+/**
+ * A debuff on an enemy (EffectKind defDown / cardResDown). count: attacks it
+ * still applies to (-1 = unlimited); cards: the attacking cards it applies to.
+ */
+export interface EnemyDebuff {
+  readonly kind: 'defDown' | 'cardResDown'; readonly value: number; readonly count: number;
+  readonly cards?: readonly Card[];
+}
+export const isEnemyDebuff = (k: EffectKind): k is EnemyDebuff['kind'] => k === 'defDown' || k === 'cardResDown';
+
+/** Sum of the enemy's debuffs of this kind that apply to an attack with this card. */
+export function debuffSum(e: Enemy, kind: EnemyDebuff['kind'], card: Card): number {
+  let v = 0;
+  for (const d of e.debuffs ?? []) if (d.kind === kind && d.count !== 0 && (!d.cards || d.cards.includes(card))) v += d.value;
+  return v;
+}
+
+/** The enemy's debuffs after one attack with this card: count-limited ones that applied lose a use. */
+export function consumeDebuffs(e: Enemy, card: Card): Enemy {
+  if (!e.debuffs?.some((d) => d.count > 0 && (!d.cards || d.cards.includes(card)))) return e;
+  const debuffs: EnemyDebuff[] = [];
+  for (const d of e.debuffs) {
+    if (d.count > 0 && (!d.cards || d.cards.includes(card))) { if (d.count > 1) debuffs.push({ ...d, count: d.count - 1 }); }
+    else debuffs.push(d);
+  }
+  return { ...e, debuffs };
 }
 /** Constants resolved for one unit against one enemy (permille). */
 export interface Affinity { readonly classAtk: number; readonly triangle: number; readonly attribute: number; }
@@ -290,12 +326,44 @@ function effectOn(u: Unit, e: Effect, v: LevelVal): Unit {
 }
 
 /**
- * Apply one effect at the given level values to the draft's front line.
- * casterKey null = Mystic Code (no self/ptOther). Enemy-side targets and
- * orderChange are not handled here. A value of 0 means "not guaranteed": no-op.
+ * Enemy a single-target debuff lands on when no attack picks it: the turn's
+ * target if it was set this turn (an NP chose it) and is alive, else the only
+ * living enemy on the field; -1 when it is ambiguous (the player could still
+ * aim elsewhere before the NPs, so we do not guess: the debuff is skipped).
  */
-export function applyEffect(d: { front: Front; cond: QuestCond }, e: Effect, v: LevelVal, casterKey: string | null, targetKey?: string): void {
+export function soleTarget(s: Pick<BattleState, 'enemies' | 'field' | 'target' | 'npsFired'>): number {
+  const alive = (ei: number) => ei >= 0 && s.enemies[ei].hp > 0 && s.field.includes(ei);
+  if (s.npsFired > 0 && alive(s.target)) return s.target;
+  const living = s.field.filter(alive);
+  return living.length === 1 ? living[0] : -1;
+}
+
+/** Shell an effect writes to: the front line, plus the enemies for our debuffs (replaced, never mutated). */
+export interface EffectDraft {
+  front: Front; cond: QuestCond;
+  enemies?: readonly Enemy[]; field?: readonly number[]; target?: number; npsFired?: number;
+}
+
+/**
+ * Apply one effect at the given level values to the draft's front line (and,
+ * for a debuff, to the draft's enemies). casterKey null = Mystic Code (no
+ * self/ptOther). orderChange is not handled here. A value of 0 means "not
+ * guaranteed": no-op. enemyTarget: the enemy a single-target debuff hits (an
+ * NP's target); without it, soleTarget().
+ */
+export function applyEffect(d: EffectDraft, e: Effect, v: LevelVal, casterKey: string | null, targetKey?: string, enemyTarget?: number): void {
   if (v.value === 0 || e.kind === 'orderChange' || !effectActive(e, d.cond)) return;
+  if (isEnemyDebuff(e.kind)) {
+    if ((e.target !== 'enemy' && e.target !== 'enemyAll') || !d.enemies || !d.field) return;
+    const es = d.enemies.slice();
+    const living = d.field.filter((ei) => ei >= 0 && es[ei].hp > 0);
+    const hit = e.target === 'enemyAll' ? living
+      : [enemyTarget ?? soleTarget({ enemies: es, field: d.field, target: d.target ?? -1, npsFired: d.npsFired ?? 0 })].filter((ei) => living.includes(ei));
+    const deb: EnemyDebuff = { kind: e.kind, value: v.value, count: v.count, ...(e.cards && { cards: e.cards }) };
+    for (const ei of hit) if (!es[ei].noDebuff) es[ei] = { ...es[ei], debuffs: [...(es[ei].debuffs ?? []), deb] };
+    d.enemies = es;
+    return;
+  }
   const f = d.front;
   // A caster whose buffs fail (castBlocked): its buffs, and the trigger buffs
   // behind deferred effects, are dropped; a deferred NP drain is kept (conservative).

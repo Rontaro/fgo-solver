@@ -1,7 +1,7 @@
 import type { Card, CompactMC, Constants, Effect } from '../data/types';
 // The engine's useSkill / useMc are imported as castSkill / castMc: they are not
 // React hooks, and the lint rule goes by the name.
-import { initBattle, useSkill as castSkill, useMc as castMc, endTurn, nextWave, livingSlots, type BattleState, type Buff, type Enemy, type Quest, type TeamMember, type Unit } from '../engine/state';
+import { initBattle, useSkill as castSkill, useMc as castMc, endTurn, nextWave, livingSlots, isEnemyDebuff, soleTarget, type BattleState, type Buff, type Enemy, type Quest, type TeamMember, type Unit } from '../engine/state';
 import { fireNp } from '../engine/np';
 import { damageBound, type BoundCtx } from './bound';
 
@@ -413,7 +413,12 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
   const enemyHashes = new WeakMap<readonly Enemy[], string>();
   const enemyHash = (es: readonly Enemy[]) => {
     let h = enemyHashes.get(es);
-    if (h === undefined) { h = es.map((e) => e.hp).join(','); enemyHashes.set(es, h); }
+    if (h === undefined) {
+      h = es.map((e) => (e.debuffs?.length
+        ? `${e.hp}~${e.debuffs.map((d) => `${d.kind}:${d.value}:${d.count}:${d.cards?.join('/') ?? ''}`).sort().join(';')}`
+        : `${e.hp}`)).join(',');
+      enemyHashes.set(es, h);
+    }
     return h;
   };
   /**
@@ -503,7 +508,15 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
     for (const e of effects) {
       const v = e.lv[idx];
       if (e.target === 'ptOne') needTarget = true;
-      if (!v || v.value === 0 || e.kind === 'orderChange' || e.kind === 'lossNp' || e.target === 'enemy' || e.target === 'enemyAll') continue;
+      if (!v || v.value === 0 || e.kind === 'orderChange' || e.kind === 'lossNp') continue;
+      if (e.target === 'enemy' || e.target === 'enemyAll') {
+        // A debuff on enemies counts when it lands on a debuffable enemy and
+        // some front-line NP is of a card it applies to.
+        if (!isEnemyDebuff(e.kind)) continue;
+        const hit = e.target === 'enemyAll' ? s.field.filter((ei) => ei >= 0 && s.enemies[ei].hp > 0) : [soleTarget(s)].filter((ei) => ei >= 0);
+        if (hit.some((ei) => !s.enemies[ei].noDebuff) && s.front.some((u) => u?.svt.np && (!e.cards || e.cards.includes(u.svt.np.card)))) relevant = true;
+        continue;
+      }
       // A deferred effect runs at the end of turn wave + wait - 1: too late if that is the last turn or later.
       if (e.deferred && s.wave + (e.deferred.at === 'delay' ? e.deferred.turns : 1) > lastWave) continue;
       if (caster === null && (e.target === 'self' || e.target === 'ptOther')) continue;

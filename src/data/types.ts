@@ -13,7 +13,11 @@ export type EffectKind =
   | 'buffRate'
   // NP gauge loss of the holder. Only ever inside a deferred effect (end of
   // turn), never immediate: the solver relies on immediate effects only helping.
-  | 'lossNp';
+  | 'lossNp'
+  // Debuffs on enemies (target enemy / enemyAll), see Enemy.debuffs in the
+  // engine: DEF down (Atlas downDefence) and card resistance down
+  // (downDefencecommandall, Effect.cards = the attacking cards it applies to).
+  | 'defDown' | 'cardResDown';
 
 // value 0 = "not guaranteed at this level" (chance-based or a failed dependent
 // follow-up): the effect does nothing there. The solver must treat orderChange

@@ -25,6 +25,7 @@ const TARGET: Record<string, TargetKind> = {
   // effects; harmful ones are unsupported whatever the target.
   self: 'self', ptOne: 'ptOne', ptAll: 'ptAll', ptOther: 'ptOther', ptFull: 'ptAll', ptOtherFull: 'ptOther',
   ptselectOneSub: 'orderChange',
+  enemy: 'enemy', enemyAll: 'enemyAll',
 };
 
 // Buffs we model. Only on allies: on an enemy they are unsupported.
@@ -256,6 +257,10 @@ function classifyTrigger(f: any, t: string, side: Side, ctx: Ctx): Class {
   return { cls: 'ignore', drop: 'trigger:' + t };
 }
 
+// Debuffs on enemies we model (EffectKind defDown / cardResDown), when cast
+// directly by our skills / NPs (not from inside trigger buffs).
+const ENEMY_DEBUFF_KIND: Record<string, EffectKind> = { downDefence: 'defDown', downDefencecommandall: 'cardResDown' };
+
 function classify(f: any, ctx: Ctx = { depth: 0, flip: false }): Class {
   const side = sideOf(f, ctx);
   if (!side) return { cls: 'unsupported', reason: 'target:' + f.funcTargetType };
@@ -264,6 +269,7 @@ function classify(f: any, ctx: Ctx = { depth: 0, flip: false }): Class {
     const t: string | undefined = f.buffs?.[0]?.type;
     if (!t) return { cls: 'unsupported', reason: 'buff:none' };
     if (side === 'ally' && BUFF_KIND[t]) return { cls: 'apply', kind: BUFF_KIND[t] };
+    if (side === 'enemy' && ENEMY_DEBUFF_KIND[t] && ctx.depth === 0 && !ctx.flip) return { cls: 'apply', kind: ENEMY_DEBUFF_KIND[t] };
     if (side === 'ally' && t === 'buffRate') {
       // A rate down (negative) would weaken our buffs: unsupported. A rate up only
       // helps: modelled when it targets traits we track, else dropped.
@@ -521,16 +527,24 @@ export function convertFunctions(funcs: any[], unsupported: string[], opts: Conv
       const b = f.buffs[0];
       const self: number[] = (b.ckSelfIndv ?? []).map((t: any) => t.id);
       const op: number[] = (b.ckOpIndv ?? []).map((t: any) => t.id);
-      if (c.kind === 'cardUp') {
+      if (c.kind === 'defDown' || c.kind === 'cardResDown') {
+        // On the enemy: ckOpIndv = the attacking card (or attacker traits),
+        // ckSelfIndv = traits the enemy must have. Only card conditions are
+        // modelled; any other condition drops the (helpful) debuff.
+        const cards = op.map((id) => CARD_BY_TRAIT[id]).filter(Boolean);
+        if (self.length || cards.length !== op.length) { drop('holderTrait:' + c.kind); continue; }
+        if (cards.length) e.cards = cards;
+      } else if (c.kind === 'cardUp') {
         // Empty ckSelfIndv = unconditioned: applies to every card, NP card included.
         const cards = self.length ? self.map((id) => CARD_BY_TRAIT[id]).filter(Boolean) : ALL_CARDS;
         // A non-card trait in ckSelfIndv is a holder condition: dropped (helpful).
         if (cards.length !== self.length && self.length) { drop('holderTrait:' + c.kind); continue; }
         e.cards = cards;
       } else if (self.length) { drop('holderTrait:' + c.kind); continue; } // holder-trait condition on a helpful buff
-      if (op.length) e.opTraits = op;
+      const onEnemy = c.kind === 'defDown' || c.kind === 'cardResDown';
+      if (op.length && !onEnemy) e.opTraits = op;
       if (c.kind === 'buffRate') e.rateOf = rateTraitsOf(f)!;
-      else {
+      else if (!onEnemy) {
         const tr: number[] = (b.vals ?? []).map((t: any) => t.id).filter((id: number) => RATE_TRAITS.has(id));
         if (tr.length) e.buffTraits = tr;
       }

@@ -57,8 +57,8 @@ export class UnsupportedQuestError extends Error {
  * rejected.
  *
  * Allow-list of buffs an enemy may hold on itself without changing whether our
- * NP kills it or how much NP we gain: debuff resist / immunity (we never debuff
- * enemies in the model), its own attack / crit / star / charge / card buffs
+ * NP kills it or how much NP we gain: debuff resist / immunity (they only mark
+ * the enemy Enemy.noDebuff, see DEBUFF_GUARD), its own attack / crit / star / charge / card buffs
  * and flat damage plus, taunt, regen and heal-received (it dies before the
  * turn ends), critical stars from hits on it (stars are not modelled), added
  * traits (ignoring them only hides trait bonuses we would get), triggers that
@@ -90,7 +90,12 @@ const ENEMY_SELF_BUFFS_OK = new Set([
 ]);
 /** Buffs that enter our damage formula (see Enemy.defUp / dmgCut). */
 const MODELLED: Record<string, 'defUp' | 'dmgCut'> = { upDefence: 'defUp', subSelfdamage: 'dmgCut' };
-interface Defence { defUp: number; dmgCut: number; }
+interface Defence { defUp: number; dmgCut: number; noDebuff: boolean; }
+/**
+ * Buffs that can make our debuffs fail on it (immunity, resistance): the
+ * enemy gets Enemy.noDebuff, whatever their value or condition.
+ */
+const DEBUFF_GUARD = new Set(['avoidState', 'upTolerance', 'upToleranceSubstate']);
 // Non-buff functions on its own side that cannot change our damage or its HP pool.
 const ENEMY_SELF_FUNCS_OK = new Set(['none', 'gainStar', 'gainNp', 'hastenNpturn', 'gainHp', 'gainHpPer']);
 const OWN_SIDE = new Set(['self', 'ptAll', 'ptOne', 'ptOther', 'ptFull', 'ptOtherFull', 'ptAnother', 'ptRandom', 'ptOneOther']);
@@ -109,6 +114,7 @@ function checkPassive(where: string, funcs: readonly RawFunc[], out: string[], s
     if (f.funcType === 'addState' || f.funcType === 'addStateShort') {
       const t = f.buffs?.[0]?.type ?? 'none';
       const k = MODELLED[t];
+      if (DEBUFF_GUARD.has(t)) (f.funcTargetType === 'self' ? self : side).noDebuff = true;
       if (k) {
         const vs = (f.svals ?? []).map((x) => x.Value ?? 0);
         if (vs.some((v) => v < 0)) out.push(`${where}: buff ${t} with a negative value`);
@@ -211,9 +217,9 @@ export function questFromAtlas(raw: RawQuest): Quest {
       reasons.push(`${w}: reinforcements enter next turn (${enemies.length} enemies, ${st.enemyFieldPosCount ?? 3} on field)`);
     }
     layouts.push(lay);
-    const side: Defence = { defUp: 0, dmgCut: 0 };
+    const side: Defence = { defUp: 0, dmgCut: 0, noDebuff: false };
     const own = enemies.map((e) => {
-      const self: Defence = { defUp: 0, dmgCut: 0 };
+      const self: Defence = { defUp: 0, dmgCut: 0, noDebuff: false };
       const where = `${w} ${e.name}`;
       for (const p of [...(e.classPassive?.classPassive ?? []), ...(e.classPassive?.addPassive ?? [])]) {
         checkPassive(`${where} passive ${p.name ?? ''}`.trim(), p.functions, reasons, self, side);
@@ -226,6 +232,7 @@ export function questFromAtlas(raw: RawQuest): Quest {
         hp: e.hp, className: e.svt.className, attribute: e.svt.attribute,
         traits: e.traits.map((t) => t.id), tdRate: e.serverMod.tdRate,
         ...(defUp > 0 && { defUp }), ...(dmgCut > 0 && { dmgCut }),
+        ...((own[i].noDebuff || side.noDebuff) && { noDebuff: true as const }),
       };
     });
   });

@@ -102,23 +102,17 @@ describe('Chaldea battle_test.dart golden values (JP, quest 93000406/3)', () => 
     expect(shoot(s, 'yuyu')).toEqual({ dmg: 146896, gauge: 3227 });
   });
 
-  // Okuni's NP first lowers the target's card resistance by 20%
-  // (downDefencecommandall, Value 200). Enemy debuffs are not modelled (they
-  // only help: ignoring them is conservative), so our damage lacks exactly that
-  // card modifier: x1.2 with no other card buff (Chaldea: 56,556, gauge 1435),
-  // x1.1 on top of Skadi's +100% (Chaldea: 103,687, gauge 2740).
-  it('Izumo no Okuni NP5 OC1 with Kaleidoscope: Chaldea 56,556 = ours x1.2 (enemy card resist down not modelled)', () => {
+  // Okuni's NP first lowers the target's Quick resistance by 20%
+  // (downDefencecommandall vs cardQuick, Value 200, a pre-damage debuff on the
+  // enemy: Enemy.debuffs), which counts for both damage and NP gain.
+  it('Izumo no Okuni NP5 OC1 with Kaleidoscope: 56,556, gauge 14.35% after', () => {
     const s = initBattle([dps(okuni, 'okuni')], mcCombat, 10, quest, constants);
-    const r = shoot(s, 'okuni');
-    expect(r.dmg).toBe(47130);
-    expect(56556 / r.dmg).toBeCloseTo(1.2, 3);
+    expect(shoot(s, 'okuni')).toEqual({ dmg: 56556, gauge: 1435 });
   });
 
-  it('Izumo no Okuni with double Scathach-Skadi (Caster) (S1 S3 each): Chaldea 103,687 = ours x1.1', () => {
+  it('Izumo no Okuni with double Scathach-Skadi (Caster) (S1 S3 each): 103,687, gauge 27.40% after', () => {
     let s = initBattle([dps(okuni, 'okuni'), support(skadi, 's1'), support(skadi, 's2')], mcCombat, 10, quest, constants);
     for (const k of ['s1', 's2']) for (const n of [1, 3] as const) s = useSkill(s, k, n, 'okuni');
-    const r = shoot(s, 'okuni');
-    expect(r.dmg).toBe(94261);
-    expect(103687 / r.dmg).toBeCloseTo(1.1, 3);
+    expect(shoot(s, 'okuni')).toEqual({ dmg: 103687, gauge: 2740 });
   });
 });

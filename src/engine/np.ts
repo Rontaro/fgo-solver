@@ -1,7 +1,7 @@
 import type { Effect, LevelVal } from '../data/types';
 import { npDamage } from './damage';
 import { splitHits, hitsOnEnemy, npRefund } from './npgain';
-import { applyEffect, mods, buffApplies, gaugeCap, livingSlots, refillField, chooseTarget, npTarget, type BattleState, type Buff, type Enemy, type QuestCond, type Unit } from './state';
+import { applyEffect, mods, buffApplies, gaugeCap, livingSlots, refillField, chooseTarget, npTarget, debuffSum, consumeDebuffs, type BattleState, type Buff, type EffectDraft, type Enemy } from './state';
 
 export interface NpResult { state: BattleState; killedAll: boolean; minMargin: number; }
 
@@ -9,13 +9,13 @@ const extraVal = (e: Effect, ocLv: number, npLv: number): LevelVal => (e.oc ? e.
 
 /**
  * NP extras: self, ptAll (alive front line) and ptOther apply; ptOne is
- * skipped (an NP picks no ally target; skipping only loses help); enemy-side
- * targets are not modelled.
+ * skipped (an NP picks no ally target; skipping only loses help). Debuffs on
+ * enemies: enemyAll on the living field, enemy on the NP's turn target.
  */
-function applyExtras(front: (Unit | null)[], cond: QuestCond, extras: readonly Effect[], pre: boolean, ocLv: number, npLv: number, key: string) {
+function applyExtras(d: EffectDraft, extras: readonly Effect[], pre: boolean, ocLv: number, npLv: number, key: string, target: number) {
   for (const e of extras) {
     if (!!e.pre !== pre || e.target === 'ptOne') continue;
-    applyEffect({ front, cond }, e, extraVal(e, ocLv, npLv), key);
+    applyEffect(d, e, extraVal(e, ocLv, npLv), key, undefined, target);
   }
 }
 
@@ -64,27 +64,34 @@ export function fireNp(state: BattleState, unitKey: string, targetIndex?: number
   const npLv = u0.npLv;
   front[ui] = { ...u0, gauge: 0 };
 
-  applyExtras(front, state.cond, np.extra, true, ocLv, npLv, unitKey);
+  // The turn's target (single-target debuffs of the NP land on it).
+  const turnTarget = np.aoe ? npTarget(state) : targets[0];
+  const pre: EffectDraft = { front, cond: state.cond, enemies: state.enemies, field: state.field };
+  applyExtras(pre, np.extra, true, ocLv, npLv, unitKey, turnTarget);
 
   const u = front[ui]!;
   const aff = state.aff[unitKey];
   if (!aff) throw new Error(`no affinity for ${unitKey}`);
   const mult = np.mult[ocLv - 1][npLv - 1];
   const used = new Set<Buff>();
-  const enemies: Enemy[] = state.enemies.slice();
+  const enemies: Enemy[] = pre.enemies!.slice();
   let refund = 0;
   let minMargin = Infinity;
   for (const ti of targets) {
     const t = enemies[ti];
     const a = aff[ti];
-    const m = mods(u, t, np.card);
+    const m0 = mods(u, t, np.card);
+    // Our debuffs on the target: DEF down lowers its defence, card resist down
+    // adds to the card modifier (damage and NP gain, as in Chaldea).
+    const m = { ...m0, cardMod: m0.cardMod + debuffSum(t, 'cardResDown', np.card) };
+    const defMod = (t.defUp ?? 0) - debuffSum(t, 'defDown', np.card);
     for (const b of u.buffs) if (b.count > 0 && buffApplies(b, t, np.card)) used.add(b);
     const se = np.seTraits && np.seMult && np.seTraits.some((tr) => t.traits.includes(tr))
       ? np.seMult[ocLv - 1][npLv - 1] : 1000;
     const damage = npDamage({
       atk: u.atk, mult, card: np.card, cardMod: m.cardMod,
       classAtk: a.classAtk, triangle: a.triangle, attribute: a.attribute,
-      atkMod: m.atkMod, defMod: t.defUp ?? 0, npDmgMod: m.npDmgMod, powerMod: m.powerMod,
+      atkMod: m.atkMod, defMod, npDmgMod: m.npDmgMod, powerMod: m.powerMod,
       seMult: se, dmgPlus: m.dmgPlus - (t.dmgCut ?? 0),
     });
     minMargin = Math.min(minMargin, damage / t.hp);
@@ -92,7 +99,7 @@ export function fireNp(state: BattleState, unitKey: string, targetIndex?: number
     refund += npRefund({
       npRate: np.npRate[npLv - 1], card: np.card, cardMod: m.cardMod, tdRate: t.tdRate, npGainMod: m.npGainMod,
     }, hits);
-    enemies[ti] = { ...t, hp: hpLeft };
+    enemies[ti] = { ...consumeDebuffs(t, np.card), hp: hpLeft };
   }
 
   // Count-limited buffs are consumed by the attack if they applied to it (any
@@ -109,9 +116,11 @@ export function fireNp(state: BattleState, unitKey: string, targetIndex?: number
   }
   front[ui] = { ...u, buffs, gauge: Math.min(gaugeCap(u.npLv), u.gauge + refund) };
 
-  applyExtras(front, state.cond, np.extra, false, ocLv, npLv, unitKey);
+  const post: EffectDraft = { front, cond: state.cond, enemies, field: state.field };
+  applyExtras(post, np.extra, false, ocLv, npLv, unitKey, turnTarget);
 
   // enemies holds the reserve too (full HP until it enters): every enemy dead
   // means field and reserve are empty.
-  return { state: refillField({ ...state, front, enemies, npsFired: state.npsFired + 1 }), killedAll: enemies.every((e) => e.hp <= 0), minMargin };
+  const after = post.enemies!;
+  return { state: refillField({ ...state, front, enemies: after, npsFired: state.npsFired + 1 }), killedAll: after.every((e) => e.hp <= 0), minMargin };
 }

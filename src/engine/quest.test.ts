@@ -141,6 +141,18 @@ describe('questFromAtlas', () => {
     expect(q.waves[0].map((e) => [e.defUp, e.dmgCut])).toEqual([[250, 500], [50, undefined], [50, undefined]]);
     expect(reasons(quest({ enemies: [mk({ classPassive: cp(fn('upDefence', [-100])) })] }))[0]).toMatch(/negative value/);
   });
+  it('marks enemies with debuff immunity / resistance passives (Enemy.noDebuff), side-wide ones on every enemy', () => {
+    const fn = (type: string, funcTargetType = 'self') => ({ funcType: 'addState', funcTargetType, buffs: [{ type }], svals: [{ Value: 100 }] });
+    const cp = (...functions: ReturnType<typeof fn>[]) => ({ classPassive: [{ name: 'P', functions }], addPassive: [] });
+    const one = questFromAtlas(quest({ enemies: [
+      mk({ deckId: 1, classPassive: cp(fn('upTolerance')) }), mk({ deckId: 2, classPassive: cp(fn('upAtk')) }),
+    ] }));
+    expect(one.waves[0].map((e) => e.noDebuff)).toEqual([true, undefined]);
+    const all = questFromAtlas(quest({ enemies: [
+      mk({ deckId: 1, classPassive: cp(fn('avoidState', 'ptAll')) }), mk({ deckId: 2, classPassive: cp(fn('upAtk')) }),
+    ] }));
+    expect(all.waves[0].map((e) => e.noDebuff)).toEqual([true, true]);
+  });
   it('allows harmless enemy self-buffs (attack, crit, debuff resist, regen, own-attack triggers)', () => {
     const ok = ['upAtk', 'upCriticaldamage', 'upTolerance', 'regainHp', 'upHate', 'addDamage', 'addIndividuality',
       'downCommandall', 'commandattackAfterFunction', 'selfturnendFunction', 'delayFunction'];

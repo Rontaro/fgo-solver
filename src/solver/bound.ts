@@ -1,5 +1,5 @@
 import type { CompactMC, Constants, Effect, NoblePhantasm } from '../data/types';
-import { affinity, effectActive, layoutOf, type BattleState, type Buff, type Enemy, type Quest, type Unit } from '../engine/state';
+import { affinity, effectActive, isEnemyDebuff, layoutOf, type BattleState, type Buff, type Enemy, type Quest, type Unit } from '../engine/state';
 import { npDamage } from '../engine/damage';
 
 /*
@@ -96,6 +96,17 @@ export function damageBound(s: BattleState, c: BoundCtx): BoundFail | null {
         if (x.kind === 'buffRate') { rate += v; return; }
         enemies.forEach((en, i) => { if (counts(x, np, en)) perEnemy[i][FIELD[x.kind as DmgKind]] += v; });
       };
+      // Our debuffs on the enemies (not scaled by buffRate, which only acts on
+      // its holder's buffs): any we may still cast reaches every debuffable
+      // enemy (optimistic); the ones already on the wave's enemies count there.
+      const deb = enemies.map(() => ({ def: 0, res: 0 }));
+      const putDebuff = (x: { kind: string; cards?: readonly string[] }, v: number, only?: number) => {
+        if (!isEnemyDebuff(x.kind as Effect['kind']) || (x.cards && !x.cards.includes(np.card))) return;
+        enemies.forEach((en, i) => {
+          if ((only === undefined || only === i) && !en.noDebuff) deb[i][x.kind === 'defDown' ? 'def' : 'res'] += v;
+        });
+      };
+      if (W === T) enemies.forEach((en, i) => { for (const d of en.debuffs ?? []) if (d.count !== 0) putDebuff(d, d.value, i); });
       // Live buffs still active on wave W (a buff on a back unit is frozen there: counted).
       const inBack = !s.front.includes(u);
       for (const b of u.buffs as readonly Buff[]) {
@@ -113,11 +124,17 @@ export function damageBound(s: BattleState, c: BoundCtx): BoundFail | null {
           for (const e of sk.effects) {
             const v = e.lv[lv]?.value ?? 0;
             if (v > 0 && reaches(e.target, cu.key, u) && effectActive(e, s.cond)) put(e, v * n);
+            else if (v > 0 && effectActive(e, s.cond)) putDebuff(e, v * n);
           }
         });
         const cnp = cu.svt.np;
         if (cnp) {
           for (const e of cnp.extra) {
+            if (isEnemyDebuff(e.kind)) {
+              const v = Math.max(...(e.oc ?? [e.lv]).map((row) => row[cu.npLv - 1]?.value ?? 0));
+              if (v > 0 && effectActive(e, s.cond)) putDebuff(e, v * (W - T + 1));
+              continue;
+            }
             if (!reaches(e.target, cu.key, u) || e.target === 'ptOne' || !effectActive(e, s.cond)) continue;
             const v = Math.max(...(e.oc ?? [e.lv]).map((row) => row[cu.npLv - 1]?.value ?? 0));
             if (v > 0) put(e, v * (W - T + 1));
@@ -131,6 +148,7 @@ export function damageBound(s: BattleState, c: BoundCtx): BoundFail | null {
         for (const e of sk.effects) {
           const v = e.lv[c.mcLv - 1]?.value ?? 0;
           if (v > 0 && reaches(e.target, null, u) && effectActive(e, s.cond)) put(e, v * n);
+          else if (v > 0 && effectActive(e, s.cond)) putDebuff(e, v * n);
         }
       }
       const mult = maxRow(np.mult, u.npLv);
@@ -143,8 +161,8 @@ export function damageBound(s: BattleState, c: BoundCtx): BoundFail | null {
         const m = { atkMod: up(m0.atkMod), cardMod: up(m0.cardMod), npDmgMod: up(m0.npDmgMod), powerMod: up(m0.powerMod), dmgPlus: up(m0.dmgPlus) };
         const se = np.seTraits && np.seMult && np.seTraits.some((t) => en.traits.includes(t)) ? maxRow(np.seMult, u.npLv) : 1000;
         sums[i].push(npDamage({
-          atk: u.atk, mult, card: np.card, cardMod: m.cardMod, classAtk: a.classAtk, triangle: a.triangle,
-          attribute: a.attribute, atkMod: m.atkMod, defMod: en.defUp ?? 0, npDmgMod: m.npDmgMod, powerMod: m.powerMod,
+          atk: u.atk, mult, card: np.card, cardMod: m.cardMod + deb[i].res, classAtk: a.classAtk, triangle: a.triangle,
+          attribute: a.attribute, atkMod: m.atkMod, defMod: (en.defUp ?? 0) - deb[i].def, npDmgMod: m.npDmgMod, powerMod: m.powerMod,
           seMult: se, dmgPlus: m.dmgPlus - (en.dmgCut ?? 0),
         }));
       });

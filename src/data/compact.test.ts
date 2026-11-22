@@ -120,11 +120,23 @@ describe('convertFunctions', () => {
   it('ignore lists depend on the target side', () => {
     expect(run([buff('invincible', 'enemy')]).unsupported).toEqual(['buff:invincible@enemy']);
     expect(run([buff('upDefence', 'enemyAll')]).unsupported).toEqual(['buff:upDefence@enemy']);
-    expect(run([buff('downDefence', 'enemy')])).toEqual({ out: [], unsupported: [] });
+    // DEF down / card resist down on enemies are modelled (Enemy.debuffs).
+    expect(run([buff('downDefence', 'enemy')]).out).toEqual([{ kind: 'defDown', target: 'enemy', lv: [{ value: 200, turns: 3, count: -1 }] }]);
     expect(run([buff('donotAct', 'self')]).unsupported).toEqual(['buff:donotAct']);
     expect(run([buff('upAtk', 'enemy')]).unsupported).toEqual(['buff:upAtk@enemy']);
   });
   const ignored = (f: any) => expect(run([f])).toEqual({ out: [], unsupported: [] });
+  it('enemy debuffs: card conditions kept, any other condition drops them', () => {
+    const quickRes = buff('downDefencecommandall', 'enemyAll');
+    quickRes.buffs[0].ckOpIndv = [{ id: 4003 }];
+    expect(run([quickRes]).out).toEqual([expect.objectContaining({ kind: 'cardResDown', target: 'enemyAll', cards: ['quick'] })]);
+    const vsHuman = buff('downDefence', 'enemy');
+    vsHuman.buffs[0].ckOpIndv = [{ id: 1001 }];
+    expect(run([vsHuman])).toEqual({ out: [], unsupported: [] });
+    const onlyDragons = buff('downDefence', 'enemy');
+    onlyDragons.buffs[0].ckSelfIndv = [{ id: 2002 }];
+    expect(run([onlyDragons])).toEqual({ out: [], unsupported: [] });
+  });
   it('only-helpful effects on allies are ignored', () => {
     for (const t of ['pierceInvincible', 'breakAvoidance', 'subSelfdamage', 'downDefence',
       'downDefencecommandall', 'addIndividuality']) ignored(buff(t, 'self'));
