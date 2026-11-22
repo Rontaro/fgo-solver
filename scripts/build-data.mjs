@@ -2,7 +2,7 @@
 // compact JSON to public/data/{NA,JP}/. Reuses src/data/compact.ts via
 // Node 24's built-in type stripping (no flag, no tsx).
 import { writeFile, readFile, mkdir, stat } from 'node:fs/promises';
-import { compactServant, compactCE, compactMC, triggerSkillIds } from '../src/data/compact.ts';
+import { compactServant, compactCE, compactMC, triggerSkillIds, partUnsupported } from '../src/data/compact.ts';
 import { buildClassConstants, classGaps } from '../src/data/constants.ts';
 
 const BASE = 'https://api.atlasacademy.io';
@@ -115,9 +115,32 @@ function topUnsupported(servants, n) {
 
 const fmt = (bytes) => (bytes / 1024 / 1024).toFixed(2) + ' MB';
 
+/*
+ * Drop audit: every skill / NP / passive / CE where a helpful effect is NOT
+ * modelled (Rate < 1000, random pick, unevaluable condition, a trigger whose
+ * skill only helps, an untracked buffRate...). Those drops are safe (we only
+ * miss a combo) but silent: the report makes them visible. Sorted by "impact":
+ * rarity first (5 and 4 stars as a popularity proxy), then the number of drops.
+ */
+function dropEntry(kind, x, parts) {
+  return { kind, collectionNo: x.collectionNo, name: x.name, rarity: x.rarity ?? 0, parts };
+}
+const byImpact = (a, b) => b.rarity - a.rarity
+  || b.parts.reduce((n, p) => n + p.drops.length, 0) - a.parts.reduce((n, p) => n + p.drops.length, 0)
+  || b.collectionNo - a.collectionNo;
+
+/** Usable servants in the data set currently on disk (the previous build), or null. */
+async function previousUsable(dir) {
+  try {
+    const old = JSON.parse(await readFile(`${dir}/servants.json`, 'utf8'));
+    return { usable: old.filter((s) => s.unsupported.length === 0).length, total: old.length };
+  } catch { return null; }
+}
+
 async function buildRegion(region) {
   const dir = `public/data/${region}`;
   await mkdir(dir, { recursive: true });
+  const before = await previousUsable(dir);
   const written = [];
   const write = async (name, data) => {
     const file = `${dir}/${name}`;
@@ -136,9 +159,20 @@ async function buildRegion(region) {
   const rawMcs = await get(`/export/${region}/nice_mystic_code.json`);
   const triggers = await triggerLookup(region, info.hash, [...rawServants, ...rawCes, ...rawMcs]);
 
-  const servants = rawServants.map((s) => compactServant(s, triggers));
+  const dropped = [];
+  const servants = rawServants.map((s) => {
+    const parts = [];
+    const c = compactServant(s, triggers, parts);
+    if (parts.length) dropped.push(dropEntry('servant', c, parts));
+    return c;
+  });
   await write('servants.json', servants);
-  const ces = rawCes.map((e) => compactCE(e, triggers));
+  const ces = rawCes.map((e) => {
+    const parts = [];
+    const c = compactCE(e, triggers, parts);
+    if (parts.length) dropped.push(dropEntry('ce', { ...c, rarity: e.rarity }, parts));
+    return c;
+  });
   await write('ces.json', ces);
   const mcs = rawMcs.map((m) => compactMC(m, triggers));
   await write('mcs.json', mcs);
@@ -168,10 +202,18 @@ async function buildRegion(region) {
   const quests = questIndex(await get(`/export/${region}/nice_war.json`));
   await write('quests.json', quests);
 
+  // Servant-level reasons (not usable at all), and the part-level marks of the usable ones.
   const unsupported = servants
     .filter((s) => s.unsupported.length > 0)
     .map((s) => ({ collectionNo: s.collectionNo, name: s.name, unsupported: s.unsupported }));
   await write('unsupported-report.json', unsupported);
+  const partMarks = servants.filter((s) => s.unsupported.length === 0).flatMap((s) => {
+    const p = partUnsupported(s);
+    return p.skills.length || p.lastTurnOnly.length || p.np ? [{ collectionNo: s.collectionNo, name: s.name, ...p }] : [];
+  });
+  await write('part-unsupported-report.json', partMarks);
+  dropped.sort(byImpact);
+  await write('dropped-report.json', dropped);
 
   // Written last: clients key their cache on hash + build, so a page loaded while
   // the files above are being regenerated never caches a half-old data set.
@@ -181,6 +223,8 @@ async function buildRegion(region) {
     region, written, servants: servants.length, ces: ces.length, mcs: mcs.length,
     questCount: quests.reduce((n, w) => n + w.quests.length, 0), wars: quests.length,
     unsupportedCount: unsupported.length, top: topUnsupported(servants, 15),
+    before, partMarks: partMarks.length, dropped,
+    cesUnsupported: ces.filter((c) => c.unsupported.length).length,
     classGaps: classGapList,
   };
 }
@@ -198,6 +242,15 @@ for (const r of results) {
   }
   console.log(`  servants ${r.servants}, CEs ${r.ces}, MCs ${r.mcs}, wars ${r.wars}, quests ${r.questCount}`);
   console.log(`  servants with non-empty unsupported: ${r.unsupportedCount}/${r.servants}`);
+  console.log(`  usable servants: ${r.servants - r.unsupportedCount}/${r.servants}` +
+    (r.before ? ` (previous build: ${r.before.usable}/${r.before.total})` : ''));
+  console.log(`  usable servants with part-level marks (a skill / the NP unusable or last-turn only): ${r.partMarks}`);
+  console.log(`  CEs with non-empty unsupported: ${r.cesUnsupported}/${r.ces}`);
+  const line = (d) => `    ${d.rarity}* #${d.collectionNo} ${d.name}: ${d.parts.map((p) => `${p.part} ${p.drops.join(',')}`).join('; ')}`;
+  console.log(`  dropped helpful effects: ${r.dropped.length} entries (dropped-report.json); top 20 servants by rarity:`);
+  for (const d of r.dropped.filter((x) => x.kind === 'servant').slice(0, 20)) console.log(line(d));
+  console.log('  top 10 CEs:');
+  for (const d of r.dropped.filter((x) => x.kind === 'ce').slice(0, 10)) console.log(line(d));
   console.log(`  class constant gaps: ${r.classGaps.length}${r.classGaps.length ? ' e.g. ' + r.classGaps.slice(0, 8).join(', ') : ''}`);
   console.log('  top unsupported types (servant count):');
   for (const [type, n] of r.top) console.log(`    ${String(n).padStart(4)}  ${type}`);
