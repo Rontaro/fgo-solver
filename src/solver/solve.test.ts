@@ -4,9 +4,10 @@ import type { Enemy, Quest, TeamMember } from '../engine/state';
 import { altria, castoria, siegfried, kaleidoscope, mcCombat, prisonRuins, constants, member } from '../engine/test-helpers';
 import { solve, replay, simulate, type Solution, type SolveOptions } from './solve';
 import { bruteMinActions } from './brute-reference';
-import { initBattle } from '../engine/state';
+import { initBattle, endTurn, nextWave } from '../engine/state';
 import { fireNp } from '../engine/np';
 import arashRaw from '../../test/fixtures/arash.json';
+import chenGongRaw from '../../test/fixtures/chen-gong.json';
 import { compactServant } from '../data/compact';
 
 // Stats output only with SOLVER_LOG=1 (like the engine benchmark's BENCH=1).
@@ -294,6 +295,29 @@ describe('solve: regressions', () => {
     expect(sol.turns[0]).toContainEqual({ kind: 'np', unit: 'arash' });
     expect(sol.turns[1]).toContainEqual({ kind: 'np', unit: 'alt' });
     expect(sol.usesSwap).toBe(false);
+  });
+  it('Chen Gong sacrifices the first other ally on the field; the back line refills it', () => {
+    const chen = compactServant(chenGongRaw as any);
+    expect(chen.np?.unsupported).toBeUndefined();
+    expect(chen.np?.extra).toContainEqual(expect.objectContaining({ kind: 'allyDeath' }));
+    const bat = supp(9131, skill(1, 7, eff('gainNp', 'ptOne', 10000)), skill(2, 7, eff('gainNp', 'ptOne', 10000)));
+    // Chen Gong (Kaleidoscope) clears wave 1 and sacrifices 'fodder' (slot 2);
+    // Altria enters from the back and clears waves 2-3 with the battery.
+    const full = [
+      member(chen, 'chen', { npLv: 5, ce: kaleidoscope, ceLv: 100, ceMlb: true }),
+      member(supp(9132), 'fodder'), member(bat, 'bat'), member({ ...altria, skills: [] }, 'alt', { npLv: 5 }),
+    ];
+    const q = quest([1000], [1000], [1000]);
+    const r = run(full, mcCombat, q);
+    expect(r.solutions.length).toBeGreaterThan(0);
+    checkSolutions(full, mcCombat, q, r.solutions);
+    expect(r.solutions[0].turns[0]).toContainEqual({ kind: 'np', unit: 'chen' });
+    // Engine: after his NP the fodder's slot is empty; next turn Altria takes it.
+    const s0 = initBattle(full, mcCombat, 10, q, constants);
+    const after = fireNp(s0, 'chen').state;
+    expect(after.front.map((u) => u?.key ?? null)).toEqual(['chen', null, 'bat']);
+    const next = nextWave(endTurn(after), q, constants);
+    expect(next.front.map((u) => u?.key ?? null)).toEqual(['chen', 'alt', 'bat']);
   });
   it('shortenSkill moves come last whatever the slot order', () => {
     const C = supp(9201, skill(1, 3, eff('gainNp', 'ptOne', 5000)));

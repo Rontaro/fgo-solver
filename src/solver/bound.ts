@@ -63,12 +63,27 @@ const usesUntil = (T: number, W: number, cd: number, cool: number, hasShorten: b
   return ready > W ? 0 : 1 + Math.floor((W - ready) / Math.max(1, cool));
 };
 
+/**
+ * Optimistic class relation of u's attacks on en: the best of the base one
+ * and every class relation overwrite (classRel) u holds or the pool can give.
+ */
+function bestTriangle(u: Unit, en: Enemy, base: number, pool: readonly Unit[]): number {
+  let t = base;
+  const look = (rel: Record<string, Record<string, number>> | undefined) => {
+    const v = rel?.[u.svt.className]?.[en.className];
+    if (v !== undefined && v > t) t = v;
+  };
+  for (const b of [...u.buffs, ...(u.dormant ?? [])]) look(b.classRel);
+  for (const cu of pool) for (const e of [...cu.svt.skills.flatMap((k) => k.effects), ...(cu.svt.np?.extra ?? [])]) look(e.classRel);
+  return t;
+}
+
 /** First wave that no explored line can clear, or null. */
 export function damageBound(s: BattleState, c: BoundCtx): BoundFail | null {
   const { quest } = c;
   const T = s.wave;
   const front = s.front.filter((u): u is Unit => u !== null);
-  const mayDie = front.some((u) => [...u.svt.skills.flatMap((k) => k.effects), ...(u.svt.np?.extra ?? [])].some((e) => e.kind === 'selfDeath'));
+  const mayDie = front.some((u) => [...u.svt.skills.flatMap((k) => k.effects), ...(u.svt.np?.extra ?? [])].some((e) => e.kind === 'selfDeath' || e.kind === 'allyDeath'));
   for (let W = T; W < quest.waves.length; W++) {
     // One order change per battle: at most one back unit ever joins.
     const swapOpen = !s.swapped && s.back.length > 0 &&
@@ -166,7 +181,7 @@ export function damageBound(s: BattleState, c: BoundCtx): BoundFail | null {
         const m = { atkMod: up(m0.atkMod), cardMod: up(m0.cardMod), npDmgMod: up(m0.npDmgMod), powerMod: up(m0.powerMod), dmgPlus: up(m0.dmgPlus) };
         const se = specificRate(np, u.svt.traits, en, (tab) => maxRow(tab, u.npLv));
         sums[i].push(npDamage({
-          atk: u.atk, mult, card: np.card, cardMod: m.cardMod + deb[i].res, classAtk: a.classAtk, triangle: a.triangle,
+          atk: u.atk, mult, card: np.card, cardMod: m.cardMod + deb[i].res, classAtk: a.classAtk, triangle: bestTriangle(u, en, a.triangle, pool),
           attribute: a.attribute, atkMod: m.atkMod, defMod: (en.defUp ?? 0) - deb[i].def, npDmgMod: m.npDmgMod, powerMod: m.powerMod,
           seMult: se, dmgPlus: m.dmgPlus - (en.dmgCut ?? 0),
         }));

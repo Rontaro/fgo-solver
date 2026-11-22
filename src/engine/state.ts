@@ -7,7 +7,7 @@ import type { CompactServant, CompactCE, CompactMC, Constants, Effect, EffectKin
  * table are shared between states, so cloning is cheap for the solver.
  */
 
-export type BuffKind = Extract<EffectKind, 'atkUp' | 'cardUp' | 'npDmgUp' | 'powerUp' | 'npGainUp' | 'ocUp' | 'dmgPlus' | 'buffRate' | 'sealNp' | 'sealSkill' | 'stun'>;
+export type BuffKind = Extract<EffectKind, 'atkUp' | 'cardUp' | 'npDmgUp' | 'powerUp' | 'npGainUp' | 'ocUp' | 'dmgPlus' | 'buffRate' | 'sealNp' | 'sealSkill' | 'stun' | 'classRel'>;
 export interface Buff {
   readonly kind: BuffKind; readonly value: number; readonly turns: number; readonly count: number;
   readonly cards?: readonly Card[]; readonly opTraits?: readonly number[];
@@ -15,6 +15,8 @@ export interface Buff {
   readonly rateOf?: readonly number[]; readonly buffTraits?: readonly number[];
   /** Aura (Effect.onField): counts only while the unit with this key is on the front line. */
   readonly src?: string;
+  /** classRel: see Effect.classRel. */
+  readonly classRel?: Record<string, Record<string, number>>;
 }
 /**
  * A deferred effect waiting on its holder (Effect.deferred): it runs at the
@@ -263,6 +265,15 @@ export interface Mods {
 
 // Buff kinds and the modifier each one adds to (buffRate scales the others, see mods()).
 const CONTROL = new Set<string>(['sealNp', 'sealSkill', 'stun']);
+/**
+ * Class relation of the unit's attacks on this enemy: the latest classRel
+ * buff covering the pair, else the base one.
+ */
+export function triangleOf(u: Unit, enemy: Pick<Enemy, 'className'>, base: number): number {
+  let t = base;
+  for (const b of u.buffs) { const v = b.classRel?.[u.svt.className]?.[enemy.className]; if (v !== undefined) t = v; }
+  return t;
+}
 /** The unit may fire its NP (no NP seal / stun on it). */
 export const canNp = (u: Unit): boolean => !u.buffs.some((b) => b.kind === 'sealNp' || b.kind === 'stun');
 /** The unit may use skills, and its cooldowns tick (no skill seal / stun on it). */
@@ -272,12 +283,13 @@ export const canSkill = (u: Unit): boolean => !u.buffs.some((b) => b.kind === 's
  * stun, a negative value. The solver never assumes such a move only helps.
  */
 export const isHarmful = (e: Effect): boolean =>
-  (e.kind === 'lossNp' && !e.deferred) || e.kind === 'lossHp' || e.kind === 'selfDeath' || CONTROL.has(e.kind) || e.lv.some((v) => v.value < 0);
-const MOD_FIELD: Record<Exclude<BuffKind, 'buffRate' | 'sealNp' | 'sealSkill' | 'stun'>, keyof Mods> = {
+  // classRel may lower a relation (Semiramis: Assassin vs Caster x1): harmful-capable.
+  (e.kind === 'lossNp' && !e.deferred) || e.kind === 'lossHp' || e.kind === 'selfDeath' || e.kind === 'allyDeath' || e.kind === 'classRel' || CONTROL.has(e.kind) || e.lv.some((v) => v.value < 0);
+const MOD_FIELD: Record<Exclude<BuffKind, 'buffRate' | 'sealNp' | 'sealSkill' | 'stun' | 'classRel'>, keyof Mods> = {
   atkUp: 'atkMod', cardUp: 'cardMod', npDmgUp: 'npDmgMod', powerUp: 'powerMod',
   npGainUp: 'npGainMod', ocUp: 'ocUp', dmgPlus: 'dmgPlus',
 };
-export const isBuffKind = (k: EffectKind): k is BuffKind => k in MOD_FIELD || k === 'buffRate' || CONTROL.has(k);
+export const isBuffKind = (k: EffectKind): k is BuffKind => k in MOD_FIELD || k === 'buffRate' || k === 'classRel' || CONTROL.has(k);
 const NO_PENDING: readonly Pending[] = [];
 
 // --- affinity ------------------------------------------------------------
@@ -321,6 +333,7 @@ function toBuff(e: Effect, kind: BuffKind, v: LevelVal): Buff {
   if (e.opTraits) b.opTraits = e.opTraits;
   if (e.rateOf) b.rateOf = e.rateOf;
   if (e.buffTraits) b.buffTraits = e.buffTraits;
+  if (e.classRel) b.classRel = e.classRel;
   return b;
 }
 
@@ -390,6 +403,11 @@ export function applyEffect(d: EffectDraft, e: Effect, v: LevelVal, casterKey: s
   if (e.kind === 'selfDeath') {
     if (e.target !== 'self' || casterKey === null) throw new Error('selfDeath on another target');
     f[frontIndex(f, casterKey)] = null;
+    return;
+  }
+  if (e.kind === 'allyDeath') {
+    const i = f.findIndex((u) => u && u.key !== casterKey && !u.svt.traits.some((t) => e.exceptTraits?.includes(t)));
+    if (i >= 0) f[i] = null;
     return;
   }
   switch (e.target) {
@@ -651,7 +669,7 @@ export function mods(unit: Unit, enemy: Enemy, card: Card): Mods {
   const m: Mods = { atkMod: 0, cardMod: 0, npDmgMod: 0, powerMod: 0, npGainMod: 0, ocUp: 0, dmgPlus: 0 };
   const rates = unit.buffs.filter((b) => b.kind === 'buffRate');
   for (const b of unit.buffs) {
-    if (b.kind === 'buffRate' || b.kind === 'sealNp' || b.kind === 'sealSkill' || b.kind === 'stun' || !buffApplies(b, enemy, card)) continue;
+    if (b.kind === 'buffRate' || b.kind === 'sealNp' || b.kind === 'sealSkill' || b.kind === 'stun' || b.kind === 'classRel' || !buffApplies(b, enemy, card)) continue;
     m[MOD_FIELD[b.kind]] += rates.length ? rated(b, rates) : b.value;
   }
   return m;

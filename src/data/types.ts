@@ -27,6 +27,13 @@ export type EffectKind =
   // slot is empty until the next turn starts, when the first back-line unit
   // takes it (Chaldea _replenishActors).
   | 'selfDeath'
+  // Kills the first other ally on the field, in slot order, skipping allies
+  // with one of Effect.exceptTraits (Atlas forceInstantDeath on
+  // ptSelfAnotherFirst, e.g. Chen Gong's NP). Same replacement as selfDeath.
+  | 'allyDeath'
+  // Class relation overwrite on the holder's attacks (Atlas
+  // overwriteClassRelation, attack side, overwriteForce): Effect.classRel.
+  | 'classRel'
   // Debuffs on enemies (target enemy / enemyAll), see Enemy.debuffs in the
   // engine: DEF down (Atlas downDefence) and card resistance down
   // (downDefencecommandall, Effect.cards = the attacking cards it applies to).
@@ -60,6 +67,10 @@ export interface Effect {
    * can target (only the ones in compact.ts RATE_TRAITS, to keep the data small).
    */
   buffTraits?: number[];
+  /** allyDeath: allies with one of these traits are skipped. */
+  exceptTraits?: number[];
+  /** classRel: [attacker class][defender class] -> class relation (permille) while it lasts. */
+  classRel?: Record<string, Record<string, number>>;
   /** Skill effects only: runs later on its target (the trigger buff's holder), see Deferred. */
   deferred?: Deferred;
   /**

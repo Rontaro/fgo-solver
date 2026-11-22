@@ -1,7 +1,7 @@
 import type { Effect, LevelVal, NoblePhantasm } from '../data/types';
 import { npDamage } from './damage';
 import { splitHits, hitsOnEnemy, npRefund } from './npgain';
-import { applyEffect, canNp, syncAuras, mods, buffApplies, gaugeCap, livingSlots, refillField, chooseTarget, npTarget, debuffSum, consumeDebuffs, type BattleState, type Buff, type EffectDraft, type Enemy } from './state';
+import { applyEffect, canNp, syncAuras, triangleOf, mods, buffApplies, gaugeCap, livingSlots, refillField, chooseTarget, npTarget, debuffSum, consumeDebuffs, type BattleState, type Buff, type EffectDraft, type Enemy } from './state';
 
 export interface NpResult { state: BattleState; killedAll: boolean; minMargin: number; }
 
@@ -107,7 +107,7 @@ export function fireNp(state: BattleState, unitKey: string, targetIndex?: number
     const se = specificRate(np, u.svt.traits, t, (tab) => tab[ocLv - 1][npLv - 1]);
     const damage = npDamage({
       atk: u.atk, mult, card: np.card, cardMod: m.cardMod,
-      classAtk: a.classAtk, triangle: a.triangle, attribute: a.attribute,
+      classAtk: a.classAtk, triangle: triangleOf(u, t, a.triangle), attribute: a.attribute,
       atkMod: m.atkMod, defMod, npDmgMod: m.npDmgMod, powerMod: m.powerMod,
       seMult: se, dmgPlus: m.dmgPlus - (t.dmgCut ?? 0),
     });

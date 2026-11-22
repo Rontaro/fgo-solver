@@ -162,7 +162,8 @@ const CHANCE_KEYS = ['ActSet', 'ActSelectIndex'];
 // checkIndvType: how ckSelfIndv/ckOpIndv lists match (any vs all). Identical
 // for lists of 0 or 1 traits, so it is accepted only then (see plain()).
 // UpBuffRateBuffIndiv: which buffs a buffRate amplifies (read by classify).
-const BUFF_SCRIPT_KEYS = new Set(['ProgressSelfTurn', 'checkIndvType', 'UpBuffRateBuffIndiv']);
+// relationId: overwriteClassRelation's table (EffectKind classRel, read by convertFunctions).
+const BUFF_SCRIPT_KEYS = new Set(['ProgressSelfTurn', 'checkIndvType', 'UpBuffRateBuffIndiv', 'relationId']);
 // Function script keys we accept: funcIndividuality = the function's own
 // traits, only when it is the "demerit" tag (3098). It only matters to effects
 // that block demerits, which we never model: ignoring them can only keep a
@@ -277,6 +278,13 @@ function classify(f: any, ctx: Ctx = { depth: 0, flip: false }): Class {
     if (side === 'ally' && BUFF_KIND[t]) return { cls: 'apply', kind: BUFF_KIND[t] };
     if (side === 'enemy' && ENEMY_DEBUFF_KIND[t] && ctx.depth === 0 && !ctx.flip) return { cls: 'apply', kind: ENEMY_DEBUFF_KIND[t] };
     if (side === 'ally' && DEMERIT_BUFF[t] && ctx.depth === 0 && !ctx.flip) return { cls: 'apply', kind: DEMERIT_BUFF[t], demerit: true };
+    if (side === 'ally' && t === 'overwriteClassRelation' && ctx.depth === 0 && !ctx.flip) {
+      // Only the attack side matters (enemies never attack); only "overwriteForce" is modelled.
+      const atk = f.buffs[0].script?.relationId?.atkSide ?? {};
+      const types = Object.values(atk).flatMap((m: any) => Object.values(m).map((x: any) => x?.type));
+      if (types.some((x) => x !== 'overwriteForce')) return { cls: 'unsupported', reason: 'buff:overwriteClassRelation:type' };
+      return types.length ? { cls: 'apply', kind: 'classRel' } : { cls: 'ignore' };
+    }
     // Special attack up vs enemies in some state (burn, curse...: buff traits
     // we do not track): helps, dropped. A negative value (a damage down) would
     // hurt: unsupported.
@@ -505,6 +513,22 @@ export function convertFunctions(funcs: any[], unsupported: string[], opts: Conv
     const lvOk = setOk[0];
     prevOk = SIDE[f.funcTargetType] === 'ally' && isPlain && lvOk.length > 0 && setOk.every((s) => s.every(Boolean));
 
+    // An ally sacrificed (Chen Gong's NP): the first other ally on the field;
+    // TargetIndiv -N skips allies with trait N. Certain (pessimistic).
+    if (f.funcType === 'forceInstantDeath' && f.funcTargetType === 'ptSelfAnotherFirst' && f.funcTargetTeam !== 'enemy') {
+      prevOk = false;
+      const keys = new Set(sets.flat().flatMap((v: any) => Object.keys(v)));
+      const tiv = new Set(sets.flat().map((v: any) => v.TargetIndiv ?? 0));
+      if ([...keys].some((k) => !['Rate', 'TargetIndiv', 'IncludeIgnoreIndividuality'].includes(k)) || tiv.size !== 1 || [...tiv][0] > 0) {
+        unsupported.push('func:forceInstantDeath:ally');
+        continue;
+      }
+      const t = [...tiv][0];
+      const e: Effect = { kind: 'allyDeath', target: 'ptOther', lv: svals.map(() => ({ value: 1, turns: -1, count: -1 })), ...(t < 0 && { exceptTraits: [-t] }) };
+      if (opts.npDamage && !afterDamage) e.pre = true;
+      out.push(e);
+      continue;
+    }
     // Self HP loss (NP / skill demerit): ignored when even five uses (more NPs
     // than a battle has turns) cannot kill the servant at level 1 with no fou;
     // else an EffectKind lossHp the engine counts against CompactServant.hp.
@@ -590,6 +614,12 @@ export function convertFunctions(funcs: any[], unsupported: string[], opts: Conv
         if (cards.length !== self.length && self.length) { drop('holderTrait:' + c.kind); continue; }
         e.cards = cards;
       } else if (self.length) { drop('holderTrait:' + c.kind); continue; } // holder-trait condition on a helpful buff
+      if (c.kind === 'classRel') {
+        const atk = b.script.relationId.atkSide;
+        e.classRel = Object.fromEntries(Object.entries(atk).map(([a, m]: [string, any]) =>
+          [a, Object.fromEntries(Object.entries(m).map(([d, x]: [string, any]) => [d, x.damageRate]))]));
+        e.lv = e.lv.map((v) => ({ ...v, value: 1 })); // no Value in Atlas: 1 = active
+      }
       const onEnemy = c.kind === 'defDown' || c.kind === 'cardResDown';
       if (op.length && !onEnemy) e.opTraits = op;
       if (c.kind === 'buffRate') e.rateOf = rateTraitsOf(f)!;
