@@ -7,7 +7,7 @@ import type { CompactServant, CompactCE, CompactMC, Constants, Effect, EffectKin
  * table are shared between states, so cloning is cheap for the solver.
  */
 
-export type BuffKind = Extract<EffectKind, 'atkUp' | 'cardUp' | 'npDmgUp' | 'powerUp' | 'npGainUp' | 'ocUp' | 'dmgPlus' | 'buffRate'>;
+export type BuffKind = Extract<EffectKind, 'atkUp' | 'cardUp' | 'npDmgUp' | 'powerUp' | 'npGainUp' | 'ocUp' | 'dmgPlus' | 'buffRate' | 'sealNp' | 'sealSkill' | 'stun'>;
 export interface Buff {
   readonly kind: BuffKind; readonly value: number; readonly turns: number; readonly count: number;
   readonly cards?: readonly Card[]; readonly opTraits?: readonly number[];
@@ -260,11 +260,22 @@ export interface Mods {
 }
 
 // Buff kinds and the modifier each one adds to (buffRate scales the others, see mods()).
-const MOD_FIELD: Record<Exclude<BuffKind, 'buffRate'>, keyof Mods> = {
+const CONTROL = new Set<string>(['sealNp', 'sealSkill', 'stun']);
+/** The unit may fire its NP (no NP seal / stun on it). */
+export const canNp = (u: Unit): boolean => !u.buffs.some((b) => b.kind === 'sealNp' || b.kind === 'stun');
+/** The unit may use skills, and its cooldowns tick (no skill seal / stun on it). */
+export const canSkill = (u: Unit): boolean => !u.buffs.some((b) => b.kind === 'sealSkill' || b.kind === 'stun');
+/**
+ * A harmful effect on our side (demerit): an immediate NP loss, a seal /
+ * stun, a negative value. The solver never assumes such a move only helps.
+ */
+export const isHarmful = (e: Effect): boolean =>
+  (e.kind === 'lossNp' && !e.deferred) || CONTROL.has(e.kind) || e.lv.some((v) => v.value < 0);
+const MOD_FIELD: Record<Exclude<BuffKind, 'buffRate' | 'sealNp' | 'sealSkill' | 'stun'>, keyof Mods> = {
   atkUp: 'atkMod', cardUp: 'cardMod', npDmgUp: 'npDmgMod', powerUp: 'powerMod',
   npGainUp: 'npGainMod', ocUp: 'ocUp', dmgPlus: 'dmgPlus',
 };
-export const isBuffKind = (k: EffectKind): k is BuffKind => k in MOD_FIELD || k === 'buffRate';
+export const isBuffKind = (k: EffectKind): k is BuffKind => k in MOD_FIELD || k === 'buffRate' || CONTROL.has(k);
 const NO_PENDING: readonly Pending[] = [];
 
 // --- affinity ------------------------------------------------------------
@@ -503,6 +514,7 @@ export function useSkill(state: BattleState, unitKey: string, num: 1 | 2 | 3, ta
   if (!skill) throw new Error(`${unitKey} has no skill ${num}`);
   const i = num - 1;
   if (u.cd[i] > 0) throw new Error(`${unitKey} skill ${num} is on cooldown`);
+  if (!canSkill(u)) throw new Error(`${unitKey} cannot use skills (seal / stun)`);
   if (skill.lastTurnOnly?.length && state.wave !== state.lastWave) throw new Error(`${unitKey} skill ${num} is usable on the last turn only`);
   const idx = u.skillLv[i] - 1;
   for (const e of skill.effects) applyEffect(d, e, e.lv[idx], unitKey, targetKey);
@@ -556,7 +568,9 @@ function tick(u: Unit): Unit {
     if (b.turns < 0) buffs.push(b);
     else { changed = true; if (b.turns > 1) buffs.push({ ...b, turns: b.turns - 1 }); }
   }
-  let out: Unit = changed ? { ...u, buffs, cd: sub3(u.cd, 1) } : u;
+  // A skill seal / stun active this turn stops the cooldowns (Chaldea
+  // canSkillCoolDown; checked before the buffs tick: the conservative side).
+  let out: Unit = changed ? { ...u, buffs, cd: canSkill(u) ? sub3(u.cd, 1) : u.cd } : u;
   if (u.pending.length) {
     const left: Pending[] = [];
     const due: Pending[] = [];
@@ -616,7 +630,7 @@ export function mods(unit: Unit, enemy: Enemy, card: Card): Mods {
   const m: Mods = { atkMod: 0, cardMod: 0, npDmgMod: 0, powerMod: 0, npGainMod: 0, ocUp: 0, dmgPlus: 0 };
   const rates = unit.buffs.filter((b) => b.kind === 'buffRate');
   for (const b of unit.buffs) {
-    if (b.kind === 'buffRate' || !buffApplies(b, enemy, card)) continue;
+    if (b.kind === 'buffRate' || b.kind === 'sealNp' || b.kind === 'sealSkill' || b.kind === 'stun' || !buffApplies(b, enemy, card)) continue;
     m[MOD_FIELD[b.kind]] += rates.length ? rated(b, rates) : b.value;
   }
   return m;

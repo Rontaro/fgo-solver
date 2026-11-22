@@ -256,6 +256,21 @@ describe('solve: regressions', () => {
     }
     expect(againstBrute(team, q, mcCombat)).toBe(1);
   });
+  it('a skill with a demerit is never forced on the last turn (party ATK up + NP seal)', () => {
+    const bat = supp(9111, skill(1, 7, eff('gainNp', 'ptOne', 10000)), skill(2, 7, eff('atkUp', 'ptAll', 100, 1), eff('sealNp', 'ptAll', 1, 1)));
+    const team = [member({ ...altria, skills: [] }, 'alt', { npLv: 5 }), member(bat, 'bat')];
+    const q = quest([1000]);
+    const r = run(team, mcCombat, q);
+    expect(r.solutions[0].actions).toBe(1);
+    expect(r.solutions[0].turns[0]).not.toContainEqual(expect.objectContaining({ unit: 'bat', num: 2 }));
+    expect(againstBrute(team, q, mcCombat)).toBe(1);
+  });
+  it('a self NP loss demerit is paid: the charge must cover it', () => {
+    // S1: 100% charge then -50% (demerit): useless alone; S2 adds the missing 50%.
+    const bat = supp(9112, skill(1, 7, eff('gainNp', 'ptOne', 10000), eff('lossNp', 'ptOne', 5000)), skill(2, 7, eff('gainNp', 'ptOne', 5000)));
+    const team = [member({ ...altria, skills: [] }, 'alt', { npLv: 5 }), member(bat, 'bat')];
+    expect(againstBrute(team, quest([1000]), mcCombat)).toBe(2);
+  });
   it('shortenSkill moves come last whatever the slot order', () => {
     const C = supp(9201, skill(1, 3, eff('gainNp', 'ptOne', 5000)));
     const H = supp(9202, skill(1, 9, eff('gainNp', 'ptAll', 5000), eff('shortenSkill', 'ptAll', 2)));

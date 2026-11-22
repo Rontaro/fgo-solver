@@ -1,7 +1,7 @@
 import type { Effect, LevelVal, NoblePhantasm } from '../data/types';
 import { npDamage } from './damage';
 import { splitHits, hitsOnEnemy, npRefund } from './npgain';
-import { applyEffect, mods, buffApplies, gaugeCap, livingSlots, refillField, chooseTarget, npTarget, debuffSum, consumeDebuffs, type BattleState, type Buff, type EffectDraft, type Enemy } from './state';
+import { applyEffect, canNp, mods, buffApplies, gaugeCap, livingSlots, refillField, chooseTarget, npTarget, debuffSum, consumeDebuffs, type BattleState, type Buff, type EffectDraft, type Enemy } from './state';
 
 export interface NpResult { state: BattleState; killedAll: boolean; minMargin: number; }
 
@@ -59,6 +59,7 @@ export function fireNp(state: BattleState, unitKey: string, targetIndex?: number
   const np = u0.svt.np;
   if (!np) throw new Error(`${unitKey} has no damage NP`);
   if (u0.gauge < 10000) throw new Error(`${unitKey} NP gauge below 100%`);
+  if (!canNp(u0)) throw new Error(`${unitKey} cannot fire its NP (seal / stun)`);
 
   // Enemy indices (state.enemies) hit by the NP.
   const living = livingSlots(state);

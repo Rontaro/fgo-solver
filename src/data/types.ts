@@ -11,9 +11,15 @@ export type EffectKind =
   // value * (1000 + sum of rates) / 1000, floored per buff, as in Chaldea's
   // getBuffRateValue (total capped at 5000).
   | 'buffRate'
-  // NP gauge loss of the holder. Only ever inside a deferred effect (end of
-  // turn), never immediate: the solver relies on immediate effects only helping.
+  // NP gauge loss of the holder: a deferred effect (end of turn) or an
+  // immediate demerit (see isHarmful).
   | 'lossNp'
+  // Demerits on our side (Atlas donotNoble / donotSkill / donotAct): the
+  // holder cannot fire its NP / use skills / do either while it lasts, and
+  // its skill cooldowns do not tick (Chaldea canSkillCoolDown). A self ATK
+  // down is an atkUp with a negative value. Modelled as certain whatever their
+  // Rate (pessimistic).
+  | 'sealNp' | 'sealSkill' | 'stun'
   // Debuffs on enemies (target enemy / enemyAll), see Enemy.debuffs in the
   // engine: DEF down (Atlas downDefence) and card resistance down
   // (downDefencecommandall, Effect.cards = the attacking cards it applies to).

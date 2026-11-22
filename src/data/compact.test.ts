@@ -122,7 +122,8 @@ describe('convertFunctions', () => {
     expect(run([buff('upDefence', 'enemyAll')]).unsupported).toEqual(['buff:upDefence@enemy']);
     // DEF down / card resist down on enemies are modelled (Enemy.debuffs).
     expect(run([buff('downDefence', 'enemy')]).out).toEqual([{ kind: 'defDown', target: 'enemy', lv: [{ value: 200, turns: 3, count: -1 }] }]);
-    expect(run([buff('donotAct', 'self')]).unsupported).toEqual(['buff:donotAct']);
+    // A self stun is a modelled demerit (EffectKind stun), certain, value 1.
+    expect(run([buff('donotAct', 'self')]).out).toEqual([{ kind: 'stun', target: 'self', lv: [{ value: 1, turns: 3, count: -1 }] }]);
     expect(run([buff('upAtk', 'enemy')]).unsupported).toEqual(['buff:upAtk@enemy']);
   });
   const ignored = (f: any) => expect(run([f])).toEqual({ out: [], unsupported: [] });
@@ -148,7 +149,7 @@ describe('convertFunctions', () => {
     // ...but the same effects on our side still block: they can hurt.
     // (reduceHp on our side is ignored too: a turn-end DoT cannot kill, see compact.ts.)
     ignored(buff('reduceHp', 'self'));
-    expect(run([buff('donotNoble', 'self')]).unsupported).toEqual(['buff:donotNoble']);
+    expect(run([buff('donotNoble', 'self')]).out).toEqual([{ kind: 'sealNp', target: 'self', lv: [{ value: 1, turns: 3, count: -1 }] }]);
   });
   it('more only-helpful effects are ignored on their side only', () => {
     for (const t of ['pierceDefence', 'downCriticalRateDamageTaken', 'downStarweight', 'upGrantInstantdeath',
@@ -252,17 +253,18 @@ describe('convertFunctions', () => {
     ]);
     expect(run([buff('addDamage', 'enemy')]).unsupported).toEqual(['buff:addDamage@enemy']);
   });
-  it('harmful functions on allies are unsupported', () => {
-    expect(run([func('lossNp')]).unsupported).toEqual(['func:lossNp']);
+  it('harmful functions on allies are unsupported, demerits modelled', () => {
+    expect(run([func('lossNp')]).out).toEqual([{ kind: 'lossNp', target: 'self', lv: [{ value: 1000, turns: -1, count: -1 }] }]);
+    expect(run([buff('downAtk', 'self')]).out).toEqual([{ kind: 'atkUp', target: 'self', lv: [{ value: -200, turns: 3, count: -1 }] }]);
     expect(run([func('instantDeath', 'ptOne')]).unsupported).toEqual(['func:instantDeath']);
     expect(run([func('subState', 'self', {}, { traitVals: [{ id: 3004 }] })]).unsupported).toEqual(['func:subState']);
     expect(run([func('subState', 'self')]).unsupported).toEqual(['func:subState']);
     // Removing debuffs only (traitVals = buffNegativeEffect) can only help.
     expect(run([func('subState', 'self', {}, { traitVals: [{ id: 3005 }] })])).toEqual({ out: [], unsupported: [] });
   });
-  it('Rate < 1000: helpful skipped, harmful unsupported', () => {
+  it('Rate < 1000: helpful skipped, a demerit counted as certain', () => {
     expect(run([func('gainNp', 'self', { Rate: 500 })])).toEqual({ out: [], unsupported: [] });
-    expect(run([func('lossNp', 'self', { Rate: 500 })]).unsupported).toEqual(['func:lossNp']);
+    expect(run([func('lossNp', 'self', { Rate: 500 })]).out).toEqual([{ kind: 'lossNp', target: 'self', lv: [{ value: 1000, turns: -1, count: -1 }] }]);
   });
   it('Rate varying by level: unguaranteed levels get value 0', () => {
     const f = func('gainNp');

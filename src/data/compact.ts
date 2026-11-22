@@ -176,7 +176,11 @@ export const RATE_TRAITS = new Set([3030]);
 const OC_SVALS = ['svals2', 'svals3', 'svals4', 'svals5'];
 
 // ignore.drop: the effect is helpful but not modelled (reported by the drop audit).
-type Class = { cls: 'apply'; kind: EffectKind } | { cls: 'ignore'; drop?: string } | { cls: 'unsupported'; reason: string };
+// demerit: a harmful effect on our side, applied as certain (see DEMERIT_BUFF).
+type Class = { cls: 'apply'; kind: EffectKind; demerit?: boolean } | { cls: 'ignore'; drop?: string } | { cls: 'unsupported'; reason: string };
+// Demerit buffs on our side we model (pessimistically: certain, unconditioned).
+const DEMERIT_BUFF: Record<string, EffectKind> = { downAtk: 'atkUp', donotNoble: 'sealNp', donotSkill: 'sealSkill', donotAct: 'stun' };
+const CONTROL_KINDS = new Set<EffectKind>(['sealNp', 'sealSkill', 'stun']);
 
 const svalSets = (f: any): any[][] => [f.svals ?? [], ...OC_SVALS.map((k) => f[k]).filter(Boolean)];
 
@@ -270,6 +274,7 @@ function classify(f: any, ctx: Ctx = { depth: 0, flip: false }): Class {
     if (!t) return { cls: 'unsupported', reason: 'buff:none' };
     if (side === 'ally' && BUFF_KIND[t]) return { cls: 'apply', kind: BUFF_KIND[t] };
     if (side === 'enemy' && ENEMY_DEBUFF_KIND[t] && ctx.depth === 0 && !ctx.flip) return { cls: 'apply', kind: ENEMY_DEBUFF_KIND[t] };
+    if (side === 'ally' && DEMERIT_BUFF[t] && ctx.depth === 0 && !ctx.flip) return { cls: 'apply', kind: DEMERIT_BUFF[t], demerit: true };
     // Special attack up vs enemies in some state (burn, curse...: buff traits
     // we do not track): helps, dropped. A negative value (a damage down) would
     // hurt: unsupported.
@@ -290,6 +295,8 @@ function classify(f: any, ctx: Ctx = { depth: 0, flip: false }): Class {
   if (side === 'ally' && FUNC_KIND[f.funcType]) return { cls: 'apply', kind: FUNC_KIND[f.funcType] };
   // Inside a deferred (end-of-turn) effect only: see EffectKind 'lossNp'.
   if (side === 'ally' && ctx.allowLoss && f.funcType === 'lossNp') return { cls: 'apply', kind: 'lossNp' };
+  // Immediate NP loss on our side (a skill / NP demerit).
+  if (side === 'ally' && ctx.depth === 0 && !ctx.flip && f.funcType === 'lossNp') return { cls: 'apply', kind: 'lossNp', demerit: true };
   if (side === 'ally' && f.funcType === 'gainNpBuffIndividualSum') return { cls: 'ignore', drop: 'func:gainNpBuffIndividualSum' };
   if (side === 'ally' && f.funcType === 'subState') {
     const tv: number[] = (f.traitVals ?? []).map((t: any) => t.id);
@@ -365,6 +372,8 @@ interface ConvOpts {
   allowLoss?: boolean;
   /** CE / event passive (battle start): mark party reach and OnField auras (Effect.full / onField). */
   start?: boolean;
+  /** The servant's HP at level 1 (Atlas hpBase): a self HP loss it cannot die of is ignored. */
+  hpMin?: number;
 }
 
 /**
@@ -492,6 +501,14 @@ export function convertFunctions(funcs: any[], unsupported: string[], opts: Conv
     const lvOk = setOk[0];
     prevOk = SIDE[f.funcTargetType] === 'ally' && isPlain && lvOk.length > 0 && setOk.every((s) => s.every(Boolean));
 
+    // Self HP loss (NP / skill demerit). HP is not modelled: ignored when even
+    // five uses (more NPs than a battle has turns) cannot kill the servant at
+    // level 1 with no fou; else unsupported (it could die).
+    if (f.funcType === 'lossHp' && f.funcTargetType === 'self' && f.funcTargetTeam !== 'enemy' && opts.hpMin
+      && sets.flat().every((v: any) => (v.Value ?? 0) * 5 < opts.hpMin!) && Object.keys(f.svals?.[0] ?? {}).every((k) => ['Rate', 'Value', 'EvenIfWinDie'].includes(k))) {
+      prevOk = false;
+      continue;
+    }
     const ctx: Ctx = { triggers: opts.triggers, depth: 0, flip: false, allowLoss: opts.allowLoss };
     const bt: string | undefined = f.buffs?.[0]?.type;
     const isState = f.funcType === 'addState' || f.funcType === 'addStateShort';
@@ -508,11 +525,25 @@ export function convertFunctions(funcs: any[], unsupported: string[], opts: Conv
     const c = classify(f, ctx);
     if (c.cls === 'ignore') { if (c.drop) drop(c.drop); continue; }
     if (c.cls === 'unsupported') { unsupported.push(c.reason); continue; }
+    const demerit = !!c.demerit;
     // Helpful effect under a condition we cannot evaluate: dropped (we only lose
     // a bonus). A non-helpful one is unsupported, quest conditions included.
-    if (!isPlain && (!qc || NOT_HELPFUL.has(c.kind))) {
-      if (NOT_HELPFUL.has(c.kind)) unsupported.push('cond:' + f.funcType);
+    if (!isPlain && (!qc || NOT_HELPFUL.has(c.kind) || demerit)) {
+      if (NOT_HELPFUL.has(c.kind) || demerit) unsupported.push('cond:' + f.funcType);
       else drop('cond:' + c.kind);
+      continue;
+    }
+    if (demerit) {
+      // Certain whatever its Rate (pessimistic): seals / stun count 1, an ATK
+      // down is a negative atkUp, an NP loss its value. No condition kept.
+      const lvAll = (set: any[]) => set.map((v) => ({
+        value: CONTROL_KINDS.has(c.kind) ? 1 : c.kind === 'atkUp' ? -Math.abs(v.Value ?? 0) : Math.abs(v.Value ?? 0),
+        turns: v.Turn ?? -1, count: v.Count ?? -1,
+      }));
+      const e: Effect = { kind: c.kind, target: TARGET[f.funcTargetType], lv: lvAll(svals) };
+      if (opts.npExtras && sets.length === 5 && sets.some((s) => JSON.stringify(s) !== JSON.stringify(svals))) e.oc = sets.map(lvAll);
+      if (opts.npDamage && !afterDamage) e.pre = true;
+      out.push(e);
       continue;
     }
     if (c.kind === 'lossNp') {
@@ -719,7 +750,7 @@ export function compactServant(svt: any, triggers?: TriggerLookup, report?: Part
   const unsupported: string[] = [];
   // appendPassive num 100..104 = append 1..5; append 2 (num 101) is "Load Magical Energy".
   const selfTraits = new Set<number>(svt.traits.map((t: any) => t.id));
-  const base: ConvOpts = { selfTraits, triggers };
+  const base: ConvOpts = { selfTraits, triggers, hpMin: svt.hpBase };
   // A form change (e.g. Mélusine, Ptolemaios) swaps skills and NP: the highest
   // priority skill/NP picked below may only exist after it. Checked on every
   // skill and NP variant, not only the chosen ones.

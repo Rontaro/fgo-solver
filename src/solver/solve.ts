@@ -1,7 +1,7 @@
 import type { Card, CompactMC, Constants, Effect } from '../data/types';
 // The engine's useSkill / useMc are imported as castSkill / castMc: they are not
 // React hooks, and the lint rule goes by the name.
-import { initBattle, useSkill as castSkill, useMc as castMc, endTurn, nextWave, livingSlots, isEnemyDebuff, soleTarget, type BattleState, type Buff, type Enemy, type Quest, type TeamMember, type Unit } from '../engine/state';
+import { initBattle, useSkill as castSkill, useMc as castMc, endTurn, nextWave, livingSlots, isEnemyDebuff, soleTarget, canNp, canSkill, isHarmful, type BattleState, type Buff, type Enemy, type Quest, type TeamMember, type Unit } from '../engine/state';
 import { fireNp } from '../engine/np';
 import { damageBound, type BoundCtx } from './bound';
 
@@ -27,10 +27,12 @@ import { damageBound, type BoundCtx } from './bound';
  * outgoing unit never comes back, so its later state does not matter. Using it
  * before the swap is dominated.
  *
- * Last turn: every immediate modelled effect but orderChange can only help
- * (buffs, NP charge and skill cooldown cuts on allies; the only thing that
- * lowers a value, lossNp, is always deferred to a turn end, which the last
- * turn never reaches), so every relevant skill is used, with no skip branch.
+ * Last turn: every immediate modelled effect but orderChange and demerits
+ * (isHarmful: an immediate NP loss, a seal / stun, a negative value) can only
+ * help (buffs, NP charge and skill cooldown cuts on allies; a deferred lossNp
+ * runs at a turn end, which the last turn never reaches), so every relevant
+ * skill without a demerit is used, with no skip branch; one with a demerit
+ * keeps its skip branch (Option.optional).
  * Skills marked lastTurnOnly are refused by the engine on earlier turns.
  *
  * Relevance (moves that cannot matter are not tried): an effect with value 0 at
@@ -163,9 +165,11 @@ function blocker(s: BattleState, st: Step): string | null {
   if (!u) return `${st.unit} is not on the front line`;
   if (st.kind === 'skill') {
     if (u.cd[st.num! - 1] > 0) return `${st.unit} skill ${st.num} on cooldown`;
+    if (!canSkill(u)) return `${st.unit} skills sealed`;
     return onFront(st.target) ? null : `${st.target} is not on the front line`;
   }
   if (u.gauge < 10000) return `${st.unit} NP gauge below 100%`;
+  if (!canNp(u)) return `${st.unit} NP sealed`;
   return allDead(s) ? 'NP fired at a dead wave' : null;
 }
 /** applyStep, or null when the step cannot run. */
@@ -260,7 +264,8 @@ export function replay(team: readonly TeamMember[], mc: CompactMC, mcLv: number,
 // --- solver --------------------------------------------------------------
 
 type Move = { kind: 'skill'; slot: number; num: 1 | 2 | 3 } | { kind: 'mc'; index: number };
-interface Option { state: BattleState; step: Step; }
+/** optional: the move has a demerit (isHarmful), so it is never forced (see branch). */
+interface Option { state: BattleState; step: Step; optional?: boolean; }
 
 const minOf = (a: readonly number[]) => a.reduce((x, y) => Math.min(x, y), Infinity);
 
@@ -508,7 +513,7 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
     for (const e of effects) {
       const v = e.lv[idx];
       if (e.target === 'ptOne') needTarget = true;
-      if (!v || v.value === 0 || e.kind === 'orderChange' || e.kind === 'lossNp') continue;
+      if (!v || v.value === 0 || e.kind === 'orderChange' || e.kind === 'lossNp' || isHarmful(e)) continue;
       if (e.target === 'enemy' || e.target === 'enemyAll') {
         // A debuff on enemies counts when it lands on a debuffable enemy and
         // some front-line NP is of a card it applies to.
@@ -545,7 +550,10 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
       const targets = targetsOf(s, sk.effects, u.skillLv[m.num - 1] - 1, u.key, last);
       for (const target of targets ?? []) {
         try {
-          out.push({ state: castSkill(s, u.key, m.num, target), step: { kind: 'skill', unit: u.key, num: m.num, ...(target !== undefined && { target }) } });
+          out.push({
+            state: castSkill(s, u.key, m.num, target), step: { kind: 'skill', unit: u.key, num: m.num, ...(target !== undefined && { target }) },
+            ...(sk.effects.some(isHarmful) && { optional: true }),
+          });
         } catch { /* engine refused the move: treat it as unavailable */ }
       }
       return out;
@@ -632,7 +640,8 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
   function branch(s: BattleState, options: Option[], last: boolean, next: (s: BattleState) => void): void {
     // Skip first: fewer actions are found first, and delayDominated finds the
     // clear of the line without a skill already cached.
-    if (!(last && options.length)) next(s);
+    // A move with a demerit may hurt: skipping it is always explored too.
+    if (!(last && options.length && !options.some((o) => o.optional))) next(s);
     for (const o of options) {
       if (stop) return;
       cur().push(o.step); acts++;
@@ -736,7 +745,7 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
 
   function firePhase(s: BattleState): void {
     if (!visit(`${lastKey(s)}F${stateHash(s, true)}`)) return;
-    const shooters = s.front.filter((u): u is Unit => !!u && u.svt.np !== null);
+    const shooters = s.front.filter((u): u is Unit => !!u && u.svt.np !== null && canNp(u));
     if (!shooters.some((u) => u.gauge >= 10000)) {
       const short = shooters.length ? Math.min(...shooters.map((u) => 10000 - u.gauge)) : 10000;
       record({ wave: s.wave + 1, turn: s.turn, reason: shooters.length ? 'no NP charged' : 'no damaging NP on the front line', gaugeShort: short });
@@ -758,7 +767,7 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
     let fired = false;
     for (let slot = 0; slot < s.front.length; slot++) {
       const u = s.front[slot];
-      if (!u || !u.svt.np || used & (1 << slot) || u.gauge < 10000) continue;
+      if (!u || !u.svt.np || used & (1 << slot) || u.gauge < 10000 || !canNp(u)) continue;
       fired = true;
       for (const ti of targetChoices(s, start, u.svt.np.aoe)) {
         if (tick()) return;
@@ -867,10 +876,12 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
   const sameGauges = (a: BattleState, b: BattleState) =>
     a.front.every((u, i) => !u?.svt.np || u.gauge === b.front[i]?.gauge);
   /** Whether the skill a step used has a deferred effect. */
+  // Also true for a skill with a demerit (isHarmful): using it a turn later is
+  // not "at least as good" (the demerit lasts into later turns).
   function deferredStep(x: Step, s: BattleState): boolean {
-    if (x.kind === 'mc') return mc.skills[x.num! - 1].effects.some((e) => e.deferred);
+    if (x.kind === 'mc') return mc.skills[x.num! - 1].effects.some((e) => e.deferred || isHarmful(e));
     const u = [...s.front, ...s.back].find((v) => v?.key === x.unit)!;
-    return !!u.svt.skills.find((k) => k.num === x.num)?.effects.some((e) => e.deferred);
+    return !!u.svt.skills.find((k) => k.num === x.num)?.effects.some((e) => e.deferred || isHarmful(e));
   }
   /** Base cooldown of the skill a step used. */
   function cooldownOf(x: Step, s: BattleState): number {
@@ -985,7 +996,7 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
    * single-target NP is on the field) and carried by the first NP step.
    */
   function clearingNps(s: BattleState): Step[] | null {
-    const st = s.front.some((u) => u?.svt.np && !u.svt.np.aoe && u.gauge >= 10000);
+    const st = s.front.some((u) => u?.svt.np && !u.svt.np.aoe && u.gauge >= 10000 && canNp(u));
     const living = livingSlots(s);
     for (const ti of st && living.length > 1 ? living : [undefined]) {
       const seq = npsFrom(ti === undefined ? s : { ...s, target: s.field[ti] }, 0, 0);
@@ -997,7 +1008,7 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
     if (depth >= MAX_NP_PER_TURN) return null;
     for (let slot = 0; slot < s.front.length; slot++) {
       const u = s.front[slot];
-      if (!u || !u.svt.np || used & (1 << slot) || u.gauge < 10000) continue;
+      if (!u || !u.svt.np || used & (1 << slot) || u.gauge < 10000 || !canNp(u)) continue;
       const r = fireNp(s, u.key);
       const step: Step = { kind: 'np', unit: u.key };
       if (r.killedAll) return [step];
