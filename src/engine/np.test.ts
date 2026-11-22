@@ -114,6 +114,35 @@ describe('fireNp: overcharge', () => {
   });
 });
 
+describe('fireNp: NP chain overcharge', () => {
+  const s0 = withEnemies(battle(altria, { npLv: 5 }), enemy());
+  const nth = (s: BattleState, n: number): BattleState => ({ ...s, npsFired: n });
+  it('counts the NPs fired this turn', () => {
+    const r1 = fireNp(withGauge(s0, 10000), 'u');
+    expect(r1.state.npsFired).toBe(1);
+    expect(s0.npsFired).toBe(0);
+  });
+  it('2nd NP +1 OC, 3rd +2 (OC-dependent extras follow)', () => {
+    expect(u(fireNp(nth(withGauge(s0, 10000), 1), 'u').state).gauge).toBe(2750); // OC2
+    expect(u(fireNp(nth(withGauge(s0, 10000), 2), 'u').state).gauge).toBe(3500); // OC3
+    expect(u(fireNp(nth(withGauge(s0, 20000), 2), 'u').state).gauge).toBe(4250); // 2 + 2 = OC4
+  });
+  it('adds to upChagetd and gauge, capped at OC5', () => {
+    const s = withBuffs(withGauge(s0, 20000), { kind: 'ocUp', value: 1, turns: 1, count: -1 });
+    expect(u(fireNp(nth(s, 1), 'u').state).gauge).toBe(4250); // 2 + 1 + 1 = OC4
+    expect(u(fireNp(nth(s, 2), 'u').state).gauge).toBe(5000); // 2 + 1 + 2 = OC5
+    expect(u(fireNp(nth(withGauge(s0, 30000), 2), 'u').state).gauge).toBe(5000); // 3 + 2 capped
+  });
+  it('the damage multiplier follows the chained OC', () => {
+    const ocNp: NoblePhantasm = { ...artsNp, mult: [1000, 2000, 3000, 4000, 5000].map((v) => Array(5).fill(v)) };
+    const svt: CompactServant = { ...artsCaster, np: ocNp };
+    const s = withEnemies(withGauge(battle(svt), 10000), enemy());
+    const d = (n: number) => 10_000_000 - fireNp(nth(s, n), 'u').state.enemies[0].hp;
+    expect(d(1) / d(0)).toBeCloseTo(2, 3);
+    expect(d(2) / d(0)).toBeCloseTo(3, 3);
+  });
+});
+
 describe('fireNp: supereffective', () => {
   const s0 = withGauge(battle(siegfried), 10000);
   const base = { ...dmgBase, atk: 9040, mult: 4000 };

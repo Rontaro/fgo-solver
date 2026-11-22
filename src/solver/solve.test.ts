@@ -4,6 +4,8 @@ import type { Enemy, Quest, TeamMember } from '../engine/state';
 import { altria, castoria, siegfried, kaleidoscope, mcCombat, prisonRuins, constants, member } from '../engine/test-helpers';
 import { solve, replay, simulate, type Solution, type SolveOptions } from './solve';
 import { bruteMinActions } from './brute-reference';
+import { initBattle } from '../engine/state';
+import { fireNp } from '../engine/np';
 
 // Stats output only with SOLVER_LOG=1 (like the engine benchmark's BENCH=1).
 const env = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env ?? {};
@@ -309,6 +311,21 @@ describe('solve: targeted cases against brute force', () => {
     // Wave 2 needs both NPs: S1 refills the charger, whose extra then tops
     // Altria up from 50% to 100% in the same turn.
     expect(againstBrute(team, quest([5000], [5000, 5000, 40000]))).toBe(1);
+  });
+  it('NP chain: the 2nd NP of a turn fires at OC2, the 3rd at OC3, and both are needed', () => {
+    // NP1 shooters at 100% (OC1 by gauge); damage multiplier 1x / 2x / 3x at OC1 / OC2 / OC3.
+    const ocNp = { ...altria.np!, extra: [], mult: [2000, 4000, 6000, 6000, 6000].map((v) => Array(5).fill(v)) };
+    const sh = (id: number, key: string) => member({ ...altria, id, skills: [], np: ocNp }, key, { npLv: 1, ce: kaleidoscope, ceLv: 100, ceMlb: true });
+    const d1 = fireNp(initBattle([sh(9351, 'a')], mcCombat, 10, quest([1e9]), constants), 'a').minMargin * 1e9;
+    // Two NPs: 1x + 2x = 3x clears 2.5x (2x without the chain bonus would not).
+    const two = [sh(9351, 'a'), sh(9352, 'b')];
+    const q2 = quest([Math.floor(2.5 * d1)]);
+    expect(againstBrute(two, q2)).toBe(0);
+    expect(run(two, mcB, q2).solutions[0].turns[0].filter((x) => x.kind === 'np')).toHaveLength(2);
+    // Three NPs: 1x + 2x + 3x = 6x clears 5.5x; two NPs (3x) do not.
+    const three = [...two, sh(9353, 'c')];
+    expect(againstBrute(three, quest([Math.floor(5.5 * d1)]))).toBe(0);
+    expect(againstBrute(two, quest([Math.floor(5.5 * d1)]))).toBe(Infinity);
   });
   it('a timed CE buff on a back unit and a late swap', () => {
     // The back unit holds a 3-turn atk up from its CE (frozen in the back) and a full bar.

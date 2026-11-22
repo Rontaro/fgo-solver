@@ -16,7 +16,9 @@ type Atom = { id: string; opts: ((s: BattleState) => BattleState)[] };
  * optionally an order change followed by any subset of what is left (the
  * incoming unit included), then every NP sequence of up to 3 distinct units
  * and every turn target (one living field slot per turn, chosen before the
- * NPs; waves with a reserve refill after each NP, as the engine does).
+ * NPs; waves with a reserve refill after each NP, as the engine does). Every
+ * NP order is tried, so the chain overcharge bonus (2nd NP +1 OC, 3rd +2,
+ * applied by fireNp from the NPs fired so far) is covered for each order.
  */
 export function bruteMinActions(team: readonly TeamMember[], mc: CompactMC, mcLv: number, quest: Quest, constants: Constants): number {
   const idx = mcLv - 1;

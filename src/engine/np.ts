@@ -30,8 +30,8 @@ function applyExtras(front: (Unit | null)[], cond: QuestCond, extras: readonly E
  * turn, before the NPs; it can be on an AoE NP too). Afterwards the empty
  * slots are refilled from the reserve (refillField), so a later NP of the
  * same turn hits the enemies that just entered. killedAll: field and reserve
- * are both empty.
- * TODO(M7): NP chains add OC (2nd NP +1, 3rd +2); not modelled yet.
+ * are both empty. The NP's overcharge includes the chain bonus (2nd NP of the
+ * turn +1 OC, 3rd +2).
  */
 export function fireNp(state: BattleState, unitKey: string, targetIndex?: number): NpResult {
   if (targetIndex !== undefined) state = chooseTarget(state, targetIndex);
@@ -54,9 +54,13 @@ export function fireNp(state: BattleState, unitKey: string, targetIndex?: number
   }
   if (targets.length === 0) throw new Error('no living enemy');
 
-  // ocUp is in whole OC levels (see mods()); clamped to 1..5 like Chaldea.
+  // OC as Chaldea's activateNP: gauge level + upChagetd (ocUp, whole levels, see
+  // mods()) + the chain bonus, clamped to 1..5. The chain bonus (battle.dart:
+  // extraOvercharge) is +1 per NP already fired in this card chain, i.e. this
+  // turn (only NPs are played): 2nd NP +1, 3rd +2. It scales everything read at
+  // ocLv: the damage multiplier, the supereffective one and OC-dependent extras.
   const ocUp = mods(u0, state.enemies[targets[0]], np.card).ocUp;
-  const ocLv = Math.max(1, Math.min(5, Math.floor(u0.gauge / 10000) + ocUp));
+  const ocLv = Math.max(1, Math.min(5, Math.floor(u0.gauge / 10000) + ocUp + state.npsFired));
   const npLv = u0.npLv;
   front[ui] = { ...u0, gauge: 0 };
 
@@ -109,5 +113,5 @@ export function fireNp(state: BattleState, unitKey: string, targetIndex?: number
 
   // enemies holds the reserve too (full HP until it enters): every enemy dead
   // means field and reserve are empty.
-  return { state: refillField({ ...state, front, enemies, npFired: true }), killedAll: enemies.every((e) => e.hp <= 0), minMargin };
+  return { state: refillField({ ...state, front, enemies, npsFired: state.npsFired + 1 }), killedAll: enemies.every((e) => e.hp <= 0), minMargin };
 }

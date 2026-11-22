@@ -7,7 +7,8 @@ import { npDamage } from '../engine/damage';
  * current one on, it gives every possible shooter every damage buff that could
  * still be active then (its live buffs, each remaining skill and MC skill as
  * many times as its cooldown allows before that wave, every NP extra once per
- * turn), at the highest overcharge, and lets the best three shooters hit each
+ * turn), at the highest overcharge (OC5 rows: gauge, upChagetd and the NP
+ * chain bonus never go past it), and lets the best three shooters hit each
  * enemy. With an order change still open, the pool is the front line plus at
  * most one back unit (the best choice). Damage is monotone in every modifier, so if even that leaves an enemy
  * alive, no line of play explored by the solver clears that wave.

@@ -48,8 +48,11 @@ export interface BattleState {
    * lives, then the auto target (npTarget).
    */
   readonly target: number;
-  /** An NP has fired this turn (the target can no longer be chosen). */
-  readonly npFired: boolean;
+  /**
+   * NPs fired so far this turn, in chain order (the target can no longer be
+   * chosen once one has fired; the next NP is chain position npsFired + 1).
+   */
+  readonly npsFired: number;
   readonly mcCd: readonly number[];
   readonly swapped: boolean;
   /** unit key -> affinity against enemies[i] of the current wave. */
@@ -119,7 +122,7 @@ export function layoutOf(quest: Quest, wave: number): WaveLayout {
 const waveState = (lay: WaveLayout) => ({
   field: lay.field, reserve: lay.reserve, refill: lay.refill,
   retarget: lay.retarget ?? lay.field.filter((x) => x >= 0).concat(lay.reserve).sort((a, b) => a - b),
-  target: -1, npFired: false,
+  target: -1, npsFired: 0,
 });
 
 /**
@@ -134,8 +137,8 @@ export function npTarget(s: Pick<BattleState, 'enemies' | 'field' | 'retarget' |
 }
 
 /** Choose the turn's target: the enemy in a living field slot, before any NP of the turn. */
-export function chooseTarget<S extends Pick<BattleState, 'enemies' | 'field' | 'target' | 'npFired'>>(s: S, slot: number): S {
-  if (s.npFired) throw new Error('the target is chosen before the NPs');
+export function chooseTarget<S extends Pick<BattleState, 'enemies' | 'field' | 'target' | 'npsFired'>>(s: S, slot: number): S {
+  if (s.npsFired > 0) throw new Error('the target is chosen before the NPs');
   const ei = s.field[slot] ?? -1;
   if (!(ei >= 0 && s.enemies[ei].hp > 0)) throw new Error(`enemy slot ${slot} is not alive`);
   return { ...s, target: ei };
@@ -390,7 +393,7 @@ export function endTurn(state: BattleState): BattleState {
     ...state,
     front: state.front.map((u) => (u ? tick(u) : null)),
     mcCd: state.mcCd.some((c) => c > 0) ? state.mcCd.map((c) => Math.max(0, c - 1)) : state.mcCd,
-    turn: state.turn + 1, target: -1, npFired: false,
+    turn: state.turn + 1, target: -1, npsFired: 0,
   };
 }
 
