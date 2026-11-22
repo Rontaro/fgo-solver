@@ -34,6 +34,9 @@ export type EffectKind =
   // Class relation overwrite on the holder's attacks (Atlas
   // overwriteClassRelation, attack side, overwriteForce): Effect.classRel.
   | 'classRel'
+  // The holder switches form (Atlas transformServant on itself, Melusine /
+  // Ptolemaios): Effect.toForm, see data/forms.ts.
+  | 'transform'
   // Debuffs on enemies (target enemy / enemyAll), see Enemy.debuffs in the
   // engine: DEF down (Atlas downDefence) and card resistance down
   // (downDefencecommandall, Effect.cards = the attacking cards it applies to).
@@ -67,6 +70,8 @@ export interface Effect {
    * can target (only the ones in compact.ts RATE_TRAITS, to keep the data small).
    */
   buffTraits?: number[];
+  /** transform: the form the holder switches to. */
+  toForm?: 'low' | 'high';
   /** allyDeath: allies with one of these traits are skipped. */
   exceptTraits?: number[];
   /** classRel: [attacker class][defender class] -> class relation (permille) while it lasts. */
@@ -166,6 +171,13 @@ export interface CompactServant {
   castBlockTraits?: number[];
   /** HP by level (Atlas hpGrowth), only for servants with a lossHp effect. */
   hp?: number[];
+  /**
+   * Both kits of a servant with forms (data/forms.ts); the top-level skills /
+   * NP are the 'high' one. A form view (inForm) sets form and formBase.
+   */
+  forms?: Record<'low' | 'high', { skills: Skill[]; np: NoblePhantasm | null }>;
+  form?: 'low' | 'high';
+  formBase?: CompactServant;
 }
 
 /**

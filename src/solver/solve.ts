@@ -401,7 +401,7 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
     if (!u) return '-';
     let h = unitHashes[wave].get(u);
     if (h === undefined) {
-      h = `${buildOf.get(u.key)}:${capCd(u.cd[0], wave)},${capCd(u.cd[1], wave)},${capCd(u.cd[2], wave)}`;
+      h = `${buildOf.get(u.key)}${u.svt.form === 'low' ? 'L' : ''}:${capCd(u.cd[0], wave)},${capCd(u.cd[1], wave)},${capCd(u.cd[2], wave)}`;
       if (u.svt.np) h += `:${u.gauge}:${buffsHash(u, wave)}`;
       // Seals / stuns and HP matter on any unit (they block its skills / NP).
       const ctl = u.buffs.filter((b) => b.kind === 'sealNp' || b.kind === 'sealSkill' || b.kind === 'stun');
@@ -517,6 +517,7 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
     for (const e of effects) {
       const v = e.lv[idx];
       if (e.target === 'ptOne') needTarget = true;
+      if (e.kind === 'transform' && v?.value) { relevant = true; continue; } // a form change: always worth trying
       if (!v || v.value === 0 || e.kind === 'orderChange' || e.kind === 'lossNp' || isHarmful(e)) continue;
       if (e.target === 'enemy' || e.target === 'enemyAll') {
         // A debuff on enemies counts when it lands on a debuffable enemy and
@@ -680,7 +681,8 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
   function gaugeShortfall(s: BattleState, pos: number, moves: readonly Move[]): number {
     let best = Infinity;
     for (const u of s.front) {
-      if (!u?.svt.np) continue;
+      // A unit with forms may get its NP from a transform: its charge counts too.
+      if (!u?.svt.np && !u?.svt.forms) continue;
       let need = 10000 - u.gauge;
       for (let p = pos; p < moves.length && need > 0; p++) {
         const m = moves[p];

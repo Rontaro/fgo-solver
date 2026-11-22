@@ -1,3 +1,4 @@
+import { inForm } from '../data/forms';
 import type { CompactServant, CompactCE, CompactMC, Constants, Effect, EffectKind, LevelVal, Card } from '../data/types';
 
 /*
@@ -284,7 +285,8 @@ export const canSkill = (u: Unit): boolean => !u.buffs.some((b) => b.kind === 's
  */
 export const isHarmful = (e: Effect): boolean =>
   // classRel may lower a relation (Semiramis: Assassin vs Caster x1): harmful-capable.
-  (e.kind === 'lossNp' && !e.deferred) || e.kind === 'lossHp' || e.kind === 'selfDeath' || e.kind === 'allyDeath' || e.kind === 'classRel' || CONTROL.has(e.kind) || e.lv.some((v) => v.value < 0);
+  // transform may be worse (an AoE NP on a single boss): never forced either.
+  (e.kind === 'lossNp' && !e.deferred) || e.kind === 'lossHp' || e.kind === 'selfDeath' || e.kind === 'allyDeath' || e.kind === 'classRel' || e.kind === 'transform' || CONTROL.has(e.kind) || e.lv.some((v) => v.value < 0);
 const MOD_FIELD: Record<Exclude<BuffKind, 'buffRate' | 'sealNp' | 'sealSkill' | 'stun' | 'classRel'>, keyof Mods> = {
   atkUp: 'atkMod', cardUp: 'cardMod', npDmgUp: 'npDmgMod', powerUp: 'powerMod',
   npGainUp: 'npGainMod', ocUp: 'ocUp', dmgPlus: 'dmgPlus',
@@ -346,6 +348,12 @@ function effectOn(u: Unit, e: Effect, v: LevelVal): Unit {
   }
   if (e.kind === 'gainNp') return { ...u, gauge: Math.min(gaugeCap(u.npLv), u.gauge + v.value) };
   if (e.kind === 'lossNp') return { ...u, gauge: Math.max(0, u.gauge - v.value) };
+  if (e.kind === 'transform') {
+    // New kit (skills, NP) of the other form; levels, cooldowns, buffs and gauge are kept.
+    if (!e.toForm) return u;
+    const next = usableServant(inForm(u.svt, e.toForm));
+    return next === u.svt ? u : { ...u, svt: next };
+  }
   if (e.kind === 'lossHp') {
     // The unit would die (or its HP is unknown): the move is not allowed.
     if (u.hp === undefined || u.hp - v.value <= 0) throw new Error(`${u.key} would die of its HP loss`);

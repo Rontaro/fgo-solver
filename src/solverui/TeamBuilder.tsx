@@ -1,3 +1,4 @@
+import { DEFAULT_FORM } from '../data/forms';
 import { getSettings } from '../app/settings';
 import { useEffect, useMemo, useState } from 'react';
 import type { CompactCE, CompactMC, CompactServant } from '../data/types';
@@ -10,7 +11,11 @@ import { addRecent, availablePresets, loadRecent, partialParts, PRESET_SLOTS, sa
 import { ServantPicker, type PickerTab } from './ServantPicker';
 
 export type SlotKind = 'empty' | 'roster' | 'support' | 'free' | 'supportAuto';
-export interface SlotState { kind: SlotKind; collectionNo: number | null; ceNo: number | null; ceLv: number; ceMlb: boolean }
+export interface SlotState {
+  kind: SlotKind; collectionNo: number | null; ceNo: number | null; ceLv: number; ceMlb: boolean;
+  /** Starting form of a servant with forms (data/forms.ts); absent = DEFAULT_FORM. */
+  form?: 'low' | 'high';
+}
 export const emptySlot = (): SlotState => ({ kind: 'empty', collectionNo: null, ceNo: null, ceLv: 100, ceMlb: false });
 
 const inp = 'rounded border border-night-700 bg-night-800 px-2 py-1 text-sm';
@@ -121,6 +126,15 @@ export function TeamBuilder({ slots, setSlots, servants, ces, mcs, owned, mcId, 
             ) : <span className="block text-night-400">{auto ? t.anyHint : t.addServant}</span>}
           </span>
         </button>
+        {locked && v.forms && (
+          <label className="flex items-center gap-2 px-1 text-xs text-night-300">{t.startForm}
+            <select className={inp} value={s.form ?? DEFAULT_FORM}
+              onChange={(e) => update(i, { form: e.target.value as 'low' | 'high' })}>
+              <option value="low">{t.formLow}</option>
+              <option value="high">{t.formHigh}</option>
+            </select>
+          </label>
+        )}
         {locked && (
           <button type="button" onClick={() => setPicking({ slot: i, what: 'ce' })} title={t.pickCe(label(i))}
             className="flex items-center gap-2 rounded border-t border-night-700/60 p-1 pt-2 text-left hover:bg-night-700/60">

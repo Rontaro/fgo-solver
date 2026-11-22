@@ -23,7 +23,7 @@ export function membersOf(r: Pick<SavedResult, 'members'>, data: RegionData): Te
     const ce = m.ceNo === null ? null : data.ces.find((c) => c.collectionNo === m.ceNo) ?? null;
     if (!svt || (m.ceNo !== null && !ce)) return null;
     out.push(ownedToMember({ collectionNo: m.collectionNo, lv: m.lv, npLv: m.npLv, skillLv: m.skillLv, append2Lv: m.append2Lv, fou: m.fou },
-      svt, m.key, { ce, lv: m.ceLv, mlb: m.ceMlb }));
+      svt, m.key, { ce, lv: m.ceLv, mlb: m.ceMlb }, m.form));
   }
   return out;
 }
@@ -33,6 +33,7 @@ export function toSavedMember(m: TeamMember, support: boolean): SavedMember {
   return {
     key: m.key, collectionNo: m.svt.collectionNo, lv: m.lv, npLv: m.npLv, skillLv: [...m.skillLv] as [number, number, number],
     append2Lv: m.append2Lv, fou: m.fou, ceNo: m.ce?.collectionNo ?? null, ceLv: m.ceLv, ceMlb: m.ceMlb, support,
+    ...(m.svt.forms && { form: m.svt.form ?? 'high' }),
   };
 }
 

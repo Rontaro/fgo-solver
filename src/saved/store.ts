@@ -20,6 +20,8 @@ export interface SavedMember {
   append2Lv: number; fou: number; ceNo: number | null; ceLv: number; ceMlb: boolean;
   /** A friend support (else from the roster). */
   support: boolean;
+  /** Starting form of a servant with forms (data/forms.ts). */
+  form?: 'low' | 'high';
 }
 
 export interface SavedQuest { id: number; phase: number; label: string; eventId: number }

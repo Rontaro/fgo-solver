@@ -115,6 +115,9 @@ export const it: Messages = {
   team: {
     heading: 'Squadra',
     saveTeam: 'Salva team',
+    startForm: 'Forma iniziale',
+    formLow: 'Prima forma (ascensione 1-2)',
+    formHigh: 'Forma finale (ascensione 3-4)',
     frontLine: 'Prima linea',
     backLine: 'Seconda linea',
     kinds: {

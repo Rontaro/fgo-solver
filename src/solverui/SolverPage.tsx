@@ -82,9 +82,9 @@ export function SolverPage({ load }: { load?: SolverLoad | null }) {
   const memberOf = (s: SlotState, i: number): TeamMember | null => {
     const svt = s.collectionNo !== null ? data.servants.get(s.collectionNo) : undefined;
     if (!svt) return null;
-    if (s.kind === 'support') return supportMember(svt, `s${i}`, ceOf(s));
+    if (s.kind === 'support') return supportMember(svt, `s${i}`, ceOf(s), s.form);
     const o = owned.find((x) => x.collectionNo === s.collectionNo);
-    return s.kind === 'roster' && o ? ownedToMember(o, svt, `r${svt.collectionNo}`, ceOf(s)) : null;
+    return s.kind === 'roster' && o ? ownedToMember(o, svt, `r${svt.collectionNo}`, ceOf(s), s.form) : null;
   };
 
   const locked = slots.map(memberOf);

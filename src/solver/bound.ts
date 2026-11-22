@@ -1,5 +1,6 @@
 import type { CompactMC, Constants, Effect, NoblePhantasm } from '../data/types';
-import { affinity, effectActive, isEnemyDebuff, layoutOf, type BattleState, type Buff, type Enemy, type Quest, type Unit } from '../engine/state';
+import { inForm } from '../data/forms';
+import { affinity, effectActive, isEnemyDebuff, layoutOf, usableServant, type BattleState, type Buff, type Enemy, type Quest, type Unit } from '../engine/state';
 import { npDamage } from '../engine/damage';
 import { specificRate } from '../engine/np';
 
@@ -98,7 +99,10 @@ export function damageBound(s: BattleState, c: BoundCtx): BoundFail | null {
   return null;
 
   /** Largest share of an enemy's HP the best 3 shooters of the pool leave standing on wave W. */
-  function missingWith(pool: readonly Unit[], W: number): number {
+  function missingWith(pool0: readonly Unit[], W: number): number {
+    // A unit with forms may switch: both kits count (optimistic).
+    const pool = pool0.flatMap((u) => (u.svt.forms
+      ? [u, { ...u, svt: usableServant(inForm(u.svt, u.svt.form === 'low' ? 'high' : 'low')) }] : [u]));
     const shooters = pool.filter((u) => u.svt.np);
     const enemies = W === T ? s.enemies : quest.waves[W];
     const sums = enemies.map(() => [] as number[]);

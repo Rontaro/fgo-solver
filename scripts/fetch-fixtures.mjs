@@ -14,6 +14,7 @@ const files = {
   'arash.json': '/nice/NA/servant/201300?lore=false', // NP: self death (selfDeath), a 0-value damage function
   'kama.json': '/nice/NA/servant/603700?lore=false', // S3: overwriteClassRelation (classRel)
   'chen-gong.json': '/nice/NA/servant/504400?lore=false', // NP: sacrifices an ally (allyDeath)
+  'melusine.json': '/nice/NA/servant/304800?lore=false', // forms: S3 transform (data/forms.ts)
   'oberon.json': '/nice/NA/servant/316?lore=false', // buffRate, end-of-turn triggers (966456, 966458)
   // Chaldea battle_test.dart scenarios (JP data, as Chaldea's own game data).
   'jp-altria.json': '/nice/JP/servant/100100?lore=false',

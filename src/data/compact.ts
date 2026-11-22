@@ -1,3 +1,5 @@
+// Explicit .ts: scripts/build-data.mjs loads this file with Node directly (type stripping).
+import { FORM_HIDES, formOfLimit, type FormHides } from './forms.ts';
 import type {
   Card, Effect, EffectKind, TargetKind, Skill, NoblePhantasm,
   CompactServant, CompactCE, CompactMC, LevelVal, EventPassive, Deferred, PartUnsupported,
@@ -105,6 +107,8 @@ const IGNORED_BUFFS_ENEMY = new Set([
   'downGainHp',
   // Enemy immunity to debuffs: we never count our debuffs on enemies.
   'avoidState',
+  // Flat damage received up on the enemy (Melusine's NP): extra damage we do not count.
+  'addSelfdamage',
 ]);
 const IGNORED_FUNCS_ALLY = new Set([
   'gainStar', 'gainHp', 'gainHpPer', 'none',
@@ -386,6 +390,8 @@ interface ConvOpts {
   start?: boolean;
   /** The servant's HP at level 1 (Atlas hpBase): a self HP loss it cannot die of is ignored. */
   hpMin?: number;
+  /** The servant's id: a transformServant into itself (a form change, data/forms.ts) is modelled. */
+  svtId?: number;
 }
 
 /**
@@ -542,6 +548,17 @@ export function convertFunctions(funcs: any[], unsupported: string[], opts: Conv
       if (opts.npExtras && sets.length === 5 && sets.some((s) => JSON.stringify(s) !== JSON.stringify(svals))) e.oc = sets.map(lvHp);
       if (opts.npDamage && !afterDamage) e.pre = true;
       out.push(e);
+      continue;
+    }
+    // Form change (Melusine, Ptolemaios): transformServant into the servant
+    // itself; SetLimitCount picks the form. Only for servants in FORM_HIDES.
+    if (f.funcType === 'transformServant' && f.funcTargetType === 'self' && opts.svtId && FORM_HIDES[opts.svtId]) {
+      prevOk = false;
+      const v0 = svals[0] ?? {};
+      if (v0.Value !== opts.svtId || typeof v0.SetLimitCount !== 'number' || svals.some((v: any) => v.SetLimitCount !== v0.SetLimitCount)) {
+        unsupported.push('func:transformServant'); continue;
+      }
+      out.push({ kind: 'transform', target: 'self', lv: svals.map(() => ({ value: 1, turns: -1, count: -1 })), toForm: formOfLimit(v0.SetLimitCount) });
       continue;
     }
     const ctx: Ctx = { triggers: opts.triggers, depth: 0, flip: false, allowLoss: opts.allowLoss };
@@ -801,7 +818,8 @@ export function compactServant(svt: any, triggers?: TriggerLookup, report?: Part
   // priority skill/NP picked below may only exist after it. Checked on every
   // skill and NP variant, not only the chosen ones.
   const groups = [...svt.skills, ...svt.noblePhantasms];
-  if (groups.some((g: any) => g.functions.some((f: any) => f.funcType === 'transformServant' && f.funcTargetTeam !== 'enemy'))) {
+  const hides = FORM_HIDES[svt.id];
+  if (!hides && groups.some((g: any) => g.functions.some((f: any) => f.funcType === 'transformServant' && f.funcTargetTeam !== 'enemy'))) {
     unsupported.push('func:transformServant');
   }
   const append2 = svt.appendPassive?.find((a: any) => a.num === 101)?.skill;
@@ -814,8 +832,16 @@ export function compactServant(svt: any, triggers?: TriggerLookup, report?: Part
     return !tv;
   }), unsupported, { ...base, drops: passiveDrops }));
   if (passiveDrops.length) report?.push({ part: 'passive', drops: uniq(passiveDrops) });
-  const skills = skillsOf(svt.skills, base, report);
-  const np = npOf(svt, unsupported, base, report);
+  // A servant with forms: each kit drops the variants hidden in that form; the
+  // top level is the 'high' one (see data/forms.ts).
+  const kit = (h: FormHides | undefined, rep?: PartDrops[]) => {
+    const raw = h ? { ...svt, skills: svt.skills.filter((s: any) => !h.skills.includes(s.id)), noblePhantasms: svt.noblePhantasms.filter((n: any) => !h.tds.includes(n.id)) } : svt;
+    return { skills: skillsOf(raw.skills, { ...base, svtId: svt.id }, rep), np: npOf(raw, unsupported, { ...base, svtId: svt.id }, rep) };
+  };
+  const high = kit(hides?.high, report);
+  const skills = high.skills;
+  const np = high.np;
+  const forms = hides ? { low: kit(hides.low), high } : undefined;
   const losesHp = [...skills.flatMap((k) => k.effects), ...(np?.extra ?? [])].some((e) => e.kind === 'lossHp');
   return {
     id: svt.id, collectionNo: svt.collectionNo, name: svt.name,
@@ -831,6 +857,7 @@ export function compactServant(svt: any, triggers?: TriggerLookup, report?: Part
     unsupported: uniq(unsupported),
     ...(castBlock.size && { castBlockTraits: [...castBlock] }),
     ...(losesHp && Array.isArray(svt.hpGrowth) && { hp: svt.hpGrowth }),
+    ...(forms && { forms }),
   };
 }
 

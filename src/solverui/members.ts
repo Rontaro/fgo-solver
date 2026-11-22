@@ -1,3 +1,4 @@
+import { DEFAULT_FORM, inForm, type FormName } from '../data/forms';
 import { getSettings } from '../app/settings';
 import type { CompactCE, CompactMC, CompactServant } from '../data/types';
 import type { TeamMember } from '../engine/state';
@@ -13,7 +14,9 @@ const clampLv = (svt: CompactServant, lv: number) => Math.max(1, Math.min(lv, sv
 export interface CeChoice { ce: CompactCE | null; lv: number; mlb: boolean }
 const NO_CE: CeChoice = { ce: null, lv: 1, mlb: false };
 
-export function ownedToMember(o: OwnedServant, svt: CompactServant, key: string, ce: CeChoice = NO_CE): TeamMember {
+export function ownedToMember(o: OwnedServant, svt0: CompactServant, key: string, ce: CeChoice = NO_CE, form?: FormName): TeamMember {
+  // A servant with forms starts in the chosen form (default DEFAULT_FORM).
+  const svt = svt0.forms ? inForm(svt0, form ?? DEFAULT_FORM) : svt0;
   return {
     svt, lv: clampLv(svt, o.lv), npLv: o.npLv, skillLv: o.skillLv,
     append2Lv: Math.min(o.append2Lv, svt.append2.length), fou: o.fou,
@@ -23,10 +26,10 @@ export function ownedToMember(o: OwnedServant, svt: CompactServant, key: string,
 
 /** A support at lv 90, NP1, skills 10/10/10, fou 1000. */
 /** A friend support, with the stats of the Settings page (getSettings().support). */
-export function supportMember(svt: CompactServant, key: string, ce: CeChoice = NO_CE): TeamMember {
+export function supportMember(svt: CompactServant, key: string, ce: CeChoice = NO_CE, form?: FormName): TeamMember {
   const d = getSettings().support;
   const lv = Math.min(d.lv, svt.atkGrowth.length);
-  return ownedToMember({ collectionNo: svt.collectionNo, lv, npLv: d.npLv, skillLv: [...d.skillLv], append2Lv: 0, fou: d.fou }, svt, key, ce);
+  return ownedToMember({ collectionNo: svt.collectionNo, lv, npLv: d.npLv, skillLv: [...d.skillLv], append2Lv: 0, fou: d.fou }, svt, key, ce, form);
 }
 
 export function defaultMc(mcs: CompactMC[]): CompactMC | undefined {

@@ -17,7 +17,7 @@ function slotsOf(r: SavedResult): SlotState[] {
   [...r.front, ...r.back].forEach((k, i) => {
     const m = r.members.find((x) => x.key === k);
     if (!m || i >= 6) return;
-    slots[i] = { kind: m.support ? 'support' : 'roster', collectionNo: m.collectionNo, ceNo: m.ceNo, ceLv: m.ceLv, ceMlb: m.ceMlb };
+    slots[i] = { kind: m.support ? 'support' : 'roster', collectionNo: m.collectionNo, ceNo: m.ceNo, ceLv: m.ceLv, ceMlb: m.ceMlb, ...(m.form && { form: m.form }) };
   });
   return slots;
 }

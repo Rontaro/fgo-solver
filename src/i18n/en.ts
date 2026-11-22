@@ -116,6 +116,9 @@ export const en = {
   team: {
     heading: 'Team',
     saveTeam: 'Save team',
+    startForm: 'Starting form',
+    formLow: 'First form (ascension 1-2)',
+    formHigh: 'Final form (ascension 3-4)',
     frontLine: 'Front line',
     backLine: 'Back line',
     kinds: {
