@@ -1,7 +1,8 @@
 import { useEffect, type ReactNode } from 'react';
 import { useT } from '../i18n';
 
-const FGA = import.meta.env.VITE_ENABLE_FGA !== 'false';
+// Off unless VITE_ENABLE_FGA=true (set in .env.local for personal use; the public build never has it).
+const FGA = import.meta.env.VITE_ENABLE_FGA === 'true';
 
 function Section({ id, title, children }: { id: string; title: string; children: ReactNode }) {
   return (

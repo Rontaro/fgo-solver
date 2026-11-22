@@ -20,7 +20,8 @@ import { useT } from '../i18n';
 const store = new IdbRosterStore();
 const MC_LV = 10;
 const MAX_SHOWN = 50;
-const FGA = import.meta.env.VITE_ENABLE_FGA !== 'false';
+// Off unless VITE_ENABLE_FGA=true (set in .env.local for personal use; the public build never has it).
+const FGA = import.meta.env.VITE_ENABLE_FGA === 'true';
 
 interface Found { solution: Solution; team?: string[] }
 interface Run { kind: 'team' | 'autocomplete'; front: string[]; back: string[]; mc: CompactMC; quest: string; slotNames: (string | undefined)[][] }
