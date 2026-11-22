@@ -105,7 +105,18 @@ export interface SolveStats {
   /** Last-turn lines not minimised: LINES_PER_START reached for their start. */
   skippedLines: number; ms: number;
 }
-export interface SolveResult { solutions: Solution[]; best: Partial | null; exhausted: boolean; stats: SolveStats; }
+/**
+ * The explored line that came closest to clearing the last wave in time
+ * (every NP of the last turn fired, enemies still standing): its steps and the
+ * largest share of an enemy's HP left. Not a solution: face cards after the NP
+ * may finish the job, but nothing guarantees it.
+ */
+export interface NearMiss { turns: Step[][]; missingPct: number; }
+export interface SolveResult {
+  solutions: Solution[]; best: Partial | null; exhausted: boolean; stats: SolveStats;
+  /** Only when there is no solution, filled by findClosest (solve itself leaves it null): see NearMiss. */
+  closest: NearMiss | null;
+}
 
 const MAX_NP_PER_TURN = 3;
 const CHECK_EVERY = 256;
@@ -186,6 +197,56 @@ export function simulate(team: readonly TeamMember[], mc: CompactMC, mcLv: numbe
   } catch (e) {
     return { ok: false, reason: (e as Error).message };
   }
+}
+
+/**
+ * Replays a line that should clear every wave but the last, and returns the
+ * largest share of an enemy's HP left on the last wave after it (0 = cleared),
+ * or null when the line breaks earlier.
+ */
+export function shortfall(team: readonly TeamMember[], mc: CompactMC, mcLv: number, quest: Quest, constants: Constants,
+  turns: readonly (readonly Step[])[]): number | null {
+  if (turns.length !== quest.waves.length) return null;
+  try {
+    let s = initBattle(team, mc, mcLv, quest, constants);
+    for (let t = 0; t < turns.length; t++) {
+      for (const st of turns[t]) {
+        if (blocker(s, st)) return null;
+        if (st.kind === 'np' && allDead(s)) return null;
+        s = applyStep(s, st, mc, mcLv);
+      }
+      if (t === turns.length - 1) return allDead(s) ? 0 : missingShare(s, quest.waves[t]);
+      if (!allDead(s)) return null;
+      s = nextWave(endTurn(s), quest, constants);
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The closest line when there is no 3T (see NearMiss): the bounds prune every
+ * line that cannot clear, so the solver never walks the near misses. Instead,
+ * search the quest again with the last wave's HP cut by `relax` (10%: lines
+ * at most 10% short), then replay what it finds on the real quest and keep
+ * the line that leaves the least HP. null when nothing comes that close.
+ */
+export function findClosest(team: readonly TeamMember[], mc: CompactMC, mcLv: number, quest: Quest, constants: Constants,
+  opts: { maxMs: number; cancel?: { cancelled: boolean }; relax?: number; maxLines?: number }): NearMiss | null {
+  const last = quest.waves.length - 1;
+  const keep = 1 - (opts.relax ?? 0.1);
+  const soft: Quest = {
+    ...quest,
+    waves: quest.waves.map((w, i) => (i === last ? w.map((e) => ({ ...e, hp: Math.max(1, Math.ceil(e.hp * keep)) })) : w)),
+  };
+  const r = solve(team, mc, mcLv, soft, constants, { maxMs: opts.maxMs, cancel: opts.cancel, maxSolutions: opts.maxLines ?? 20 });
+  let out: NearMiss | null = null;
+  for (const sol of r.solutions) {
+    const m = shortfall(team, mc, mcLv, quest, constants, sol.turns);
+    if (m !== null && m > 0 && (!out || m < out.missingPct)) out = { turns: sol.turns, missingPct: m };
+  }
+  return out;
 }
 
 /** Like simulate, but throws unless the solution clears every wave. Returns the margins. */
@@ -983,5 +1044,5 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
   solutions.sort(compareSolutions);
   stats.memoSize = memo.size;
   stats.ms = performance.now() - t0;
-  return { solutions, best: solutions.length ? null : best, exhausted, stats };
+  return { solutions, best: solutions.length ? null : best, exhausted, stats, closest: null };
 }

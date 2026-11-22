@@ -1,7 +1,7 @@
 import type { CompactMC, Constants } from '../data/types';
 import type { Quest, TeamMember } from '../engine/state';
 import { questFromAtlas, UnsupportedQuestError, type RawQuest } from '../engine/quest';
-import { solve, type Solution, type SolveResult, type SolveStats } from './solve';
+import { findClosest, solve, type Solution, type SolveResult, type SolveStats } from './solve';
 import { autocomplete, type AutocompleteDeps, type AutocompleteResult, type Slot } from './autocomplete';
 
 /*
@@ -54,6 +54,10 @@ export async function handleMessage(msg: InMsg, post: (m: OutMsg) => void, deps:
         maxMs: p.maxMs, maxSolutions: p.maxSolutions, cancel,
         onSolution: (solution) => post({ type: 'solution', id, solution }),
       });
+      // No 3T: a second search for the closest line, with the same time limit.
+      if (!result.solutions.length && !cancel.cancelled && !deps.solve) {
+        result.closest = findClosest(p.team, p.mc, p.mcLv, quest, p.constants, { maxMs: p.maxMs, cancel, maxLines: 5 });
+      }
       post({ type: 'done', id, result });
       return;
     }

@@ -39,7 +39,7 @@ import { initBattle, useSkill, useMc, endTurn, nextWave, type BattleState, type 
 import { fireNp } from './np';
 import { constants, member, mcCombat } from './test-helpers';
 import { RANDOM_MIN } from './damage';
-import { solve, replay } from '../solver/solve';
+import { solve, replay, findClosest, shortfall } from '../solver/solve';
 
 const triggers = new Map<number, any>([skill966533, skill960408, skill966456, skill966458].map((k: any) => [k.id, k]));
 const ishtar = compactServant(ishRaw as any, triggers);
@@ -137,6 +137,18 @@ describe('Ghost Room "The Dangerous Invention" golden test (Laplace)', () => {
     expect(unit('ish').dormant).toHaveLength(2);
     expect(unit('ob').buffs.some((b) => b.src)).toBe(false);
   });
+  it('solver: without the bond CE no 3T, but the closest line is reported (a few % short on the boss)', () => {
+    const r = solve(team(), mcCombat, 10, quest, constants, { maxMs: 30_000 });
+    expect(r.solutions).toHaveLength(0);
+    const c = findClosest(team(), mcCombat, 10, quest, constants, { maxMs: 120_000, maxLines: 5 });
+    expect(c).not.toBeNull();
+    expect(c!.turns).toHaveLength(3);
+    // Real shortfall of that line on the real quest: the boss keeps a few % of its HP.
+    expect(shortfall(team(), mcCombat, 10, quest, constants, c!.turns)).toBe(c!.missingPct);
+    expect(c!.missingPct).toBeGreaterThan(0);
+    // 981,523 of 1,005,200: the same 15% of power the bond CE adds (see the header).
+    expect(c!.missingPct).toBeCloseTo(0.0236, 3);
+  }, 200_000);
   it('solver: finds a 3T with the bond CE (Oberon from the back, S3 on the last turn only)', () => {
     const r = solve(team(true), mcCombat, 10, quest, constants, { maxMs: 120_000, maxSolutions: 1 });
     expect(r.solutions.length).toBe(1);

@@ -195,6 +195,8 @@ export const en = {
     missingDamage: (wave: number, pct: string) => `Reached wave ${wave}: ${pct}% damage short.`,
     npNotCharged: (wave: number) => `Reached wave ${wave}: NP not charged.`,
     showText: 'show text',
+    closestTitle: (pct: string) => `Closest line: ${pct}% of an enemy's HP left after the last NP`,
+    closestNote: 'Not a 3T: the face cards played after the NP may finish the wave, but nothing guarantees it (card draw, damage roll).',
     actions: (n: number) => `${n} actions`,
     orderChange: ' · order change',
     team: 'Team:',

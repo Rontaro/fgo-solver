@@ -4,7 +4,7 @@ import type { CompactMC } from '../data/types';
 import type { TeamMember } from '../engine/state';
 import { IdbRosterStore } from '../roster/store';
 import type { OwnedServant } from '../roster/types';
-import { compareSolutions, type Partial, type Solution, type SolveStats } from '../solver/solve';
+import { compareSolutions, type NearMiss, type Partial, type Solution, type SolveStats } from '../solver/solve';
 import type { Slot } from '../solver/autocomplete';
 import type { InMsg, OutMsg, Progress } from '../solver/worker-handler';
 import { defaultMc, describeTurns, formatTurns, ownedToMember, slotEnemyNames, supportMember, SUPPORT_POOL_CAP, type CeChoice } from './members';
@@ -40,6 +40,7 @@ export function SolverPage() {
   const [found, setFound] = useState<Found[]>([]);
   const [stats, setStats] = useState<Progress | SolveStats | null>(null);
   const [best, setBest] = useState<Partial | null | undefined>(undefined);
+  const [closest, setClosest] = useState<NearMiss | null>(null);
   const [exhausted, setExhausted] = useState<boolean | null>(null);
   const [stoppedByUser, setStoppedByUser] = useState(false);
   const [error, setError] = useState<{ message: string; reasons?: readonly string[] } | null>(null);
@@ -111,7 +112,7 @@ export function SolverPage() {
     members.current = map;
     const k = team.map((m) => m.key);
     setRun({ kind: isAuto ? 'autocomplete' : 'team', front: k.slice(0, 3), back: k.slice(3), mc, quest: quest.label, slotNames: slotEnemyNames(quest.raw) });
-    setFound([]); setStats(null); setBest(undefined); setExhausted(null); setStoppedByUser(false); setError(null); setRunning(true);
+    setFound([]); setStats(null); setBest(undefined); setClosest(null); setExhausted(null); setStoppedByUser(false); setError(null); setRunning(true);
 
     w.onmessage = (e: MessageEvent<OutMsg>) => {
       const m = e.data;
@@ -119,7 +120,7 @@ export function SolverPage() {
       if (m.type === 'solution') setFound((f) => [...f, { solution: m.solution, team: m.team }]);
       else if (m.type === 'progress') setStats(m.stats);
       else if (m.type === 'done') {
-        if ('best' in m.result) { setBest(m.result.best); setStats(m.result.stats); }
+        if ('best' in m.result) { setBest(m.result.best); setClosest(m.result.closest ?? null); setStats(m.result.stats); }
         else setStats((s) => ({ triedTeams: (m.result as { triedTeams: number }).triedTeams, solutions: s && 'solutions' in s ? s.solutions : 0, ms: s?.ms ?? 0 }));
         setExhausted(m.result.exhausted); setRunning(false); w.terminate();
       } else if (m.type === 'error') { setError({ message: m.message, reasons: m.reasons }); setRunning(false); w.terminate(); }
@@ -189,10 +190,19 @@ export function SolverPage() {
         {!running && run && found.length === 0 && !error && (
           <p className="text-sm text-amber-300">
             {{ none: t.noSolution, timeLimit: t.noSolutionTimeLimit, stopped: t.noSolutionStopped }[noSolutionKind(exhausted, stoppedByUser)]}{' '}
-            {best ? (best.missingDamagePct !== undefined
+            {/* The search's own shortfall is an optimistic bound: the closest real line below replaces it. */}
+            {best && !closest ? (best.missingDamagePct !== undefined
               ? t.missingDamage(best.wave, (best.missingDamagePct * 100).toFixed(1))
               : t.npNotCharged(best.wave)) : ''}
           </p>
+        )}
+        {!running && run && found.length === 0 && !error && closest && (
+          <div className="space-y-3 rounded-lg border border-amber-500/40 bg-night-950/60 p-4 text-sm">
+            <p className="font-semibold text-amber-200">{t.closestTitle((closest.missingPct * 100).toFixed(1))}</p>
+            <p className="text-xs text-night-300">{t.closestNote}</p>
+            <TurnSteps turns={describeTurns(closest.turns, run.front, run.back, run.mc)} unit={unit}
+              enemyAt={(tn, slot) => run.slotNames[tn]?.[slot]} />
+          </div>
         )}
         {run && sorted.length > 0 && (
           <label className="flex items-center gap-2 text-xs text-night-400">

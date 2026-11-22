@@ -194,6 +194,8 @@ export const it: Messages = {
     missingDamage: (wave, pct) => `Arrivato alla wave ${wave}: manca ${pct}% di danno.`,
     npNotCharged: (wave) => `Arrivato alla wave ${wave}: NP non carico.`,
     showText: 'mostra testo',
+    closestTitle: (pct: string) => `Linea più vicina: resta il ${pct}% degli HP di un nemico dopo l'ultimo NP`,
+    closestNote: "Non è un 3T: le carte giocate dopo l'NP possono chiudere l'ondata, ma niente lo garantisce (carte pescate, roll del danno).",
     actions: (n) => `${n} azioni`,
     orderChange: ' · order change',
     team: 'Squadra:',
