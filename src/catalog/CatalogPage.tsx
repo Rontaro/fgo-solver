@@ -1,37 +1,19 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useRegionData } from '../app/RegionData';
 import { FaceIcon } from '../app/ServantIcon';
-import type { Card, CompactServant } from '../data/types';
+import type { CompactServant } from '../data/types';
 import { IdbRosterStore } from '../roster/store';
 import { useT } from '../i18n';
-import type { OwnedServant } from '../roster/types';
+import { newOwned } from '../roster/defaults';
 import {
   EMPTY_FILTERS, activeFilterCount, classLabel, classesOf, filterServants, groupServants, loadPrefs, savePrefs,
-  servantType, toggle, type CatalogFilters, type GroupBy, type Ownership, type SvtType,
+  servantType, toggle, type CatalogFilters, type GroupBy, type Ownership,
 } from './catalog';
+import { CARD_LABEL, Chip, Corner, ServantTile, TYPE_LABEL, starStr } from './ServantTile';
 
 const store = new IdbRosterStore();
 
-// Same defaults as the roster page.
-const newOwned = (collectionNo: number): OwnedServant =>
-  ({ collectionNo, lv: 90, npLv: 1, skillLv: [10, 10, 10], append2Lv: 0, fou: 0 });
-
-const CARD_LABEL: Record<Card, string> = { arts: 'Arts', buster: 'Buster', quick: 'Quick' };
-const CARD_CLS: Record<Card, string> = { arts: 'bg-blue-600', buster: 'bg-red-600', quick: 'bg-green-600' };
-const TYPE_LABEL: Record<SvtType, string> = { aoe: 'AoE', st: 'ST', support: 'Support' };
 const RARITIES = [5, 4, 3, 2, 1, 0];
-
-const starStr = (r: number) => (r > 0 ? '★'.repeat(r) : '0★');
-
-function Chip({ on, onClick, children }: { on: boolean; onClick: () => void; children: ReactNode }) {
-  return (
-    <button type="button" onClick={onClick} aria-pressed={on}
-      className={`rounded-full border px-2.5 py-1 text-xs ${on
-        ? 'border-sky-500 bg-sky-600/30 text-sky-200' : 'border-zinc-700 bg-zinc-800 text-zinc-300 hover:border-zinc-500'}`}>
-      {children}
-    </button>
-  );
-}
 
 function FilterGroup({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -42,33 +24,14 @@ function FilterGroup({ title, children }: { title: string; children: ReactNode }
   );
 }
 
-function TypeBadge({ s }: { s: CompactServant }) {
-  const t = servantType(s);
-  const cls = s.np ? CARD_CLS[s.np.card] : 'bg-zinc-600';
-  return <span className={`rounded px-1 text-[10px] font-bold leading-4 text-white ${cls}`}>{t.toUpperCase()}</span>;
-}
-
 function ServantCard({ s, owned, onOpen }: { s: CompactServant; owned: boolean; onOpen: () => void }) {
   const t = useT().catalog;
   const unsupported = s.unsupported.length > 0;
   return (
-    <button type="button" onClick={onOpen} title={s.name}
-      className="flex w-20 flex-col items-center gap-0.5 rounded p-1 text-center hover:bg-zinc-800 focus:bg-zinc-800 focus:outline-none">
-      <span className="relative">
-        <FaceIcon face={s.face} name={s.name} size={64} className={unsupported ? 'opacity-60' : ''} />
-        {owned && (
-          <span aria-label={t.inRoster}
-            className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-sky-500 text-xs font-bold text-white ring-2 ring-zinc-950">✓</span>
-        )}
-        {unsupported && (
-          <span title={t.notSimulable} aria-label={t.notSimulable}
-            className="absolute -left-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-amber-600 text-xs font-bold text-white ring-2 ring-zinc-950">!</span>
-        )}
-      </span>
-      <span className="text-[10px] leading-3 text-amber-400">{starStr(s.rarity)}</span>
-      <TypeBadge s={s} />
-      <span className="line-clamp-2 text-[11px] leading-tight text-zinc-300">{s.name}</span>
-    </button>
+    <ServantTile s={s} onClick={onOpen} dim={unsupported} corners={<>
+      {owned && <Corner pos="tr" cls="bg-sky-500" label={t.inRoster}>✓</Corner>}
+      {unsupported && <Corner pos="tl" cls="bg-amber-600" label={t.notSimulable}>!</Corner>}
+    </>} />
   );
 }
 

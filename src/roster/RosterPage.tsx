@@ -9,14 +9,13 @@ import { ImportDialog } from './ImportDialog';
 import { useT } from '../i18n';
 import { IdbRosterStore, RosterValidationError, exportJson, importJson } from './store';
 import type { OwnedServant, RosterDoc } from './types';
+import { newOwned } from './defaults';
 
 const store = new IdbRosterStore();
 const SAVE_DELAY_MS = 500;
 const MAX_RESULTS = 20;
 
-function newServant(collectionNo: number): OwnedServant {
-  return { collectionNo, lv: 90, npLv: 1, skillLv: [10, 10, 10], append2Lv: 0, fou: 0 };
-}
+const newServant = newOwned;
 
 /** Integer input that commits only valid values in [min, max] and reverts on blur. */
 function NumberCell({ value, min, max, onChange, label }: {

@@ -10,6 +10,7 @@ import type { InMsg, OutMsg, Progress } from '../solver/worker-handler';
 import { defaultMc, describeTurns, formatTurns, ownedToMember, slotEnemyNames, supportMember, SUPPORT_POOL_CAP, type CeChoice } from './members';
 import { QuestPicker, type PickedQuest } from './QuestPicker';
 import { emptySlot, TeamBuilder, type SlotState } from './TeamBuilder';
+import { defaultMaxS, noSolutionKind } from './picker';
 import { MarginBars, TurnSteps } from './TurnSteps';
 import { FaceIcon } from '../app/ServantIcon';
 import { toFgaCommand } from '../fga/command';
@@ -32,12 +33,14 @@ export function SolverPage() {
   const [quest, setQuest] = useState<PickedQuest | null>(null);
   const [slots, setSlots] = useState<SlotState[]>(() => Array.from({ length: 6 }, emptySlot));
   const [mcId, setMcId] = useState<number | null>(null);
-  const [maxS, setMaxS] = useState(20);
+  // null = the default for the run kind (autocomplete gets more time).
+  const [maxSOverride, setMaxS] = useState<number | null>(null);
   const [running, setRunning] = useState(false);
   const [found, setFound] = useState<Found[]>([]);
   const [stats, setStats] = useState<Progress | SolveStats | null>(null);
   const [best, setBest] = useState<Partial | null | undefined>(undefined);
   const [exhausted, setExhausted] = useState<boolean | null>(null);
+  const [stoppedByUser, setStoppedByUser] = useState(false);
   const [error, setError] = useState<{ message: string; reasons?: readonly string[] } | null>(null);
   const [run, setRun] = useState<Run | null>(null);
   const [showText, setShowText] = useState(false);
@@ -57,7 +60,7 @@ export function SolverPage() {
   if (!data) return null;
   const mc = data.mcs.find((m) => m.id === mcId);
 
-  const ceOf = (s: SlotState): CeChoice => ({ ce: data.ces.find((c) => c.name === s.ceName.trim()) ?? null, lv: s.ceLv, mlb: s.ceMlb });
+  const ceOf = (s: SlotState): CeChoice => ({ ce: s.ceNo === null ? null : data.ces.find((c) => c.collectionNo === s.ceNo) ?? null, lv: s.ceLv, mlb: s.ceMlb });
   const memberOf = (s: SlotState, i: number): TeamMember | null => {
     const svt = s.collectionNo !== null ? data.servants.get(s.collectionNo) : undefined;
     if (!svt) return null;
@@ -69,6 +72,7 @@ export function SolverPage() {
   const locked = slots.map(memberOf);
   const keys = locked.flatMap((m) => (m ? [m.key] : []));
   const isAuto = slots.some((s) => s.kind === 'free' || s.kind === 'supportAuto');
+  const maxS = maxSOverride ?? defaultMaxS(isAuto);
   const problem = !quest ? t.noQuest
     : quest.unsupported ? t.unsupportedNode
     : !mc ? t.noMc
@@ -106,7 +110,7 @@ export function SolverPage() {
     members.current = map;
     const k = team.map((m) => m.key);
     setRun({ kind: isAuto ? 'autocomplete' : 'team', front: k.slice(0, 3), back: k.slice(3), mc, quest: quest.label, slotNames: slotEnemyNames(quest.raw) });
-    setFound([]); setStats(null); setBest(undefined); setExhausted(null); setError(null); setRunning(true);
+    setFound([]); setStats(null); setBest(undefined); setExhausted(null); setStoppedByUser(false); setError(null); setRunning(true);
 
     w.onmessage = (e: MessageEvent<OutMsg>) => {
       const m = e.data;
@@ -145,6 +149,7 @@ export function SolverPage() {
   const stop = () => {
     const w = worker.current;
     if (!w) return;
+    setStoppedByUser(true);
     w.postMessage({ type: 'cancel', id: jobId.current } satisfies InMsg);
     const id = jobId.current;
     setTimeout(() => {
@@ -156,7 +161,7 @@ export function SolverPage() {
     <div className="space-y-4">
       <QuestPicker region={region} wars={data.quests} onChange={setQuest} />
       <TeamBuilder slots={slots} setSlots={setSlots} servants={data.servants} ces={data.ces} mcs={data.mcs} owned={owned}
-        mcId={mcId} setMcId={setMcId} maxS={maxS} setMaxS={setMaxS} />
+        mcId={mcId} setMcId={setMcId} maxS={maxS} setMaxS={setMaxS} isAuto={isAuto} defaultMaxS={defaultMaxS(isAuto)} />
       <section className="space-y-3 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
         <div className="flex flex-wrap items-center gap-3">
           <button onClick={start} disabled={running || !!problem}
@@ -183,7 +188,7 @@ export function SolverPage() {
         )}
         {!running && run && found.length === 0 && !error && (
           <p className="text-sm text-amber-300">
-            {t.noSolution}{' '}
+            {{ none: t.noSolution, timeLimit: t.noSolutionTimeLimit, stopped: t.noSolutionStopped }[noSolutionKind(exhausted, stoppedByUser)]}{' '}
             {best ? (best.missingDamagePct !== undefined
               ? t.missingDamage(best.wave, (best.missingDamagePct * 100).toFixed(1))
               : t.npNotCharged(best.wave)) : ''}
