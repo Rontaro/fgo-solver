@@ -12,6 +12,16 @@ const files = {
   'ereshkigal.json': '/nice/NA/servant/196?lore=false', // Ghost Room golden test
   'ishtar.json': '/nice/NA/servant/142?lore=false', // delayFunction S3 (skill 960408)
   'oberon.json': '/nice/NA/servant/316?lore=false', // buffRate, end-of-turn triggers (966456, 966458)
+  // Chaldea battle_test.dart scenarios (JP data, as Chaldea's own game data).
+  'jp-altria.json': '/nice/JP/servant/100100?lore=false',
+  'jp-koyanskaya-light.json': '/nice/JP/servant/604200?lore=false',
+  'jp-kama-avenger.json': '/nice/JP/servant/1101100?lore=false',
+  'jp-castoria.json': '/nice/JP/servant/504500?lore=false',
+  'jp-sapphire.json': '/nice/JP/equip/9401850?lore=false',
+  'jp-yang-guifei.json': '/nice/JP/servant/2500400?lore=false',
+  'jp-okuni.json': '/nice/JP/servant/504900?lore=false',
+  'jp-skadi.json': '/nice/JP/servant/503900?lore=false',
+  'jp-quest-sky-caster.json': '/nice/JP/quest/93000406/3?lore=false',
   // Skills run by trigger buffs (build-data resolves them the same way).
   'skill-966533.json': '/nice/NA/skill/966533',
   'skill-964095.json': '/nice/NA/skill/964095',
