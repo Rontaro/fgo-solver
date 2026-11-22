@@ -13,7 +13,14 @@ import skill966533 from '../../test/fixtures/skill-966533.json';
 import skill964095 from '../../test/fixtures/skill-964095.json';
 import oni from '../../test/fixtures/pioneering-oni.json';
 import eresh from '../../test/fixtures/ereshkigal.json';
-import { compactServant, compactCE, compactMC, convertFunctions, faceOf } from './compact';
+import ishtar from '../../test/fixtures/ishtar.json';
+import oberon from '../../test/fixtures/oberon.json';
+import blackGrail from '../../test/fixtures/black-grail.json';
+import aerialDrive from '../../test/fixtures/aerial-drive.json';
+import skill960408 from '../../test/fixtures/skill-960408.json';
+import skill966456 from '../../test/fixtures/skill-966456.json';
+import skill966458 from '../../test/fixtures/skill-966458.json';
+import { compactServant, compactCE, compactMC, convertFunctions, faceOf, partUnsupported, type PartDrops } from './compact';
 
 describe('compactServant', () => {
   it('Castoria: S1 atkUp ptAll 20% 3 turns at lv10, gainNp 30%', () => {
@@ -127,7 +134,8 @@ describe('convertFunctions', () => {
     for (const t of ['reduceHp', 'donotSkill', 'donotNoble', 'addIndividuality']) ignored(buff(t, 'enemy'));
     ignored(func('lossNp', 'enemyAll'));
     // ...but the same effects on our side still block: they can hurt.
-    expect(run([buff('reduceHp', 'self')]).unsupported).toEqual(['buff:reduceHp']);
+    // (reduceHp on our side is ignored too: a turn-end DoT cannot kill, see compact.ts.)
+    ignored(buff('reduceHp', 'self'));
     expect(run([buff('donotNoble', 'self')]).unsupported).toEqual(['buff:donotNoble']);
   });
   it('more only-helpful effects are ignored on their side only', () => {
@@ -138,7 +146,8 @@ describe('convertFunctions', () => {
     }
     for (const t of ['upFuncHpReduce', 'upNonresistInstantdeath', 'avoidState', 'downGainHp']) ignored(buff(t, 'enemy'));
     ignored(func('displayBuffstring', 'enemy'));
-    ignored(buff('upFuncHpReduce', 'self')); // DoT received: allies are never under a DoT in the model
+    ignored(buff('upFuncHpReduce', 'self')); // DoT received: cannot kill at a cleared turn end
+    for (const t of ['downCriticaldamage', 'downCriticalpoint']) ignored(buff(t, 'self')); // crit demerits
     expect(run([buff('downTolerance', 'enemy')])).toEqual({ out: [], unsupported: [] });
   });
   it('without a lookup, skill-triggering buffs stay unsupported (old behaviour)', () => {
@@ -366,8 +375,10 @@ describe('popular farming servants (real fixtures)', () => {
   // Lookup built from saved /nice/NA/skill/{id} fixtures, like build-data does.
   const lookup = new Map<number, any>([skill966533, skill964095].map((k: any) => [k.id, k]));
   it('Koyanskaya of Light: NP-gain trigger resolved and ignored, simulable', () => {
-    expect(compactServant(koyanskaya as any).unsupported)
-      .toEqual(['buff:commandattackAfterFunctionMainOnly']); // without a lookup: old behaviour
+    // Without a lookup: old behaviour, now on the skill that grants it (S2), not the servant.
+    const bare = compactServant(koyanskaya as any);
+    expect(bare.unsupported).toEqual([]);
+    expect(bare.skills[1].unsupported).toEqual(['buff:commandattackAfterFunctionMainOnly']);
     const s = compactServant(koyanskaya as any, lookup);
     expect(s.unsupported).toEqual([]);
     expect(s.np).toMatchObject({ card: 'buster', aoe: true });
@@ -494,5 +505,116 @@ describe('face icons', () => {
     expect(faceOf({ '3': 'c' })).toBe('c');
     expect(faceOf({})).toBe('');
     expect(faceOf(undefined)).toBe('');
+  });
+});
+
+describe('per-part marks, deferred effects, buff effectiveness (real fixtures)', () => {
+  const lookup = new Map<number, any>([skill960408, skill966456, skill966458, skill966533].map((k: any) => [k.id, k]));
+  const lv10 = (e: any) => e.lv[9];
+  it('Ishtar S3 "Mana Burst (Gem)": the delayFunction becomes a delayed ATK up (next turn)', () => {
+    const s = compactServant(ishtar as any, lookup);
+    expect(s.unsupported).toEqual([]);
+    const [atk] = s.skills[2].effects;
+    expect(s.skills[2].effects).toHaveLength(1);
+    expect(atk).toMatchObject({ kind: 'atkUp', target: 'self', deferred: { at: 'delay', turns: 1 } });
+    expect(lv10(atk)).toEqual({ value: 500, turns: 1, count: -1 });
+    expect(atk.lv[0].value).toBe(300);
+    // Without the lookup the trigger is only helpful: dropped, as before.
+    expect(compactServant(ishtar as any).skills[2].effects).toEqual([]);
+  });
+  it('Oberon: usable; the NP (enemy invincible after the damage) and S3 are marked per part', () => {
+    const s = compactServant(oberon as any, lookup);
+    expect(s.unsupported).toEqual([]);
+    expect(s.castBlockTraits).toEqual([500800]); // passive: buffs cast by Merlin allies fail
+    expect(s.np!.unsupported).toEqual(['buff:invincible@enemy']);
+    // S1: NP damage up carries the trait S3 amplifies.
+    expect(s.skills[0].effects[0]).toMatchObject({ kind: 'npDmgUp', buffTraits: [3030] });
+    // S2: charge now, NP drain on the target at the end of the turn.
+    expect(s.skills[1].effects.map((e) => [e.kind, e.target, e.deferred])).toEqual([
+      ['gainNp', 'ptOne', undefined], ['lossNp', 'ptOne', { at: 'turnEnd', turns: 1 }],
+    ]);
+    expect(lv10(s.skills[1].effects[1]).value).toBe(2000);
+    expect(s.skills[1].lastTurnOnly).toBeUndefined();
+    // S3: buster up + buff effectiveness up; the end-of-turn sleep: last turn only.
+    expect(s.skills[2].effects.map((e) => e.kind)).toEqual(['cardUp', 'buffRate']);
+    expect(s.skills[2].effects[1]).toMatchObject({ target: 'ptOne', rateOf: [3030] });
+    expect(lv10(s.skills[2].effects[1]).value).toBe(1000);
+    expect(s.skills[2].lastTurnOnly).toEqual(['trigger:selfturnendFunction:func:subState']);
+    expect(partUnsupported(s)).toEqual({
+      skills: [], lastTurnOnly: [{ num: 3, reasons: ['trigger:selfturnendFunction:func:subState'] }],
+      np: ['buff:invincible@enemy'],
+    });
+  });
+  it('without a lookup the trigger skills are restricted per skill, not the servant', () => {
+    const s = compactServant(oberon as any);
+    expect(s.unsupported).toEqual([]);
+    expect(partUnsupported(s).lastTurnOnly.map((x) => x.num)).toEqual([2, 3]);
+  });
+  it('farming CEs: The Black Grail (HP loss each turn) and Aerial Drive (event encounter bonus) are usable', () => {
+    const grail = compactCE(blackGrail as any);
+    expect(grail.unsupported).toEqual([]);
+    expect(grail.effectsMlb).toEqual([expect.objectContaining({ kind: 'npDmgUp', target: 'self', lv: [{ value: 800, turns: -1, count: -1 }] })]);
+    const drive = compactCE(aerialDrive as any);
+    expect(drive.unsupported).toEqual([]);
+    expect(drive.effectsMlb.map((e) => e.kind)).toEqual(['cardUp', 'npDmgUp', 'gainNp']);
+  });
+  it('drop audit: helpful effects that are not modelled are reported per part', () => {
+    const report: PartDrops[] = [];
+    compactServant(koyanskaya as any, lookup, report);
+    expect(report).toEqual([{ part: 's2', drops: ['trigger:commandattackAfterFunctionMainOnly'] }]);
+  });
+});
+
+describe('convertFunctions: deferred and restricted triggers', () => {
+  const buff = (type: string, target = 'self', sv: Record<string, number> = {}) => ({
+    funcType: 'addStateShort', funcTargetType: target, funcTargetTeam: 'playerAndEnemy', functvals: [],
+    buffs: [{ type, ckSelfIndv: [], ckOpIndv: [], script: {}, vals: [{ id: 3004 }, { id: 3030 }] }],
+    svals: [{ Rate: 1000, Turn: 3, Count: -1, Value: 200, ...sv }],
+  });
+  const func = (funcType: string, target = 'self', sv: Record<string, number> = {}) => ({
+    funcType, funcTargetType: target, funcTargetTeam: 'playerAndEnemy', functvals: [], buffs: [], svals: [{ Rate: 1000, Value: 1000, ...sv }],
+  });
+  const lookup = new Map<number, any>([
+    [1, { id: 1, functions: [buff('upNpdamage', 'self', { Turn: 1, Value: 300 }), func('gainStar')] }],
+    [2, { id: 2, functions: [func('lossNp', 'self', { Value: 2000 })] }],
+    [3, { id: 3, functions: [buff('donotAct', 'self')] }],
+    [4, { id: 4, functions: [func('gainNp', 'ptAll')] }],
+    [5, { id: 5, functions: [func('lossNp', 'self', { Rate: 500 })] }],
+  ]);
+  const run = (funcs: any[]) => {
+    const unsupported: string[] = [], restrict: string[] = [], drops: string[] = [];
+    return { out: convertFunctions(funcs, unsupported, { triggers: lookup, restrict, drops }), unsupported, restrict, drops };
+  };
+  const trig = (t: string, id: number, sv: Record<string, number> = {}, target = 'ptOne') =>
+    run([buff(t, target, { Value: id, Value2: 1, Turn: 1, Count: -1, Rate: 5000, ...sv })]);
+  it('delayFunction -> deferred effects on the holder, with the triggered skill level', () => {
+    const r = trig('delayFunction', 1, { Turn: 2 });
+    expect(r.unsupported).toEqual([]);
+    expect(r.out).toEqual([{ kind: 'npDmgUp', target: 'ptOne', lv: [{ value: 300, turns: 1, count: -1 }], buffTraits: [3030], deferred: { at: 'delay', turns: 2 } }]);
+  });
+  it('selfturnendFunction: lasts min(Turn, Count) turn ends; unbounded is restricted', () => {
+    expect(trig('selfturnendFunction', 2, { Turn: -1, Count: 2 }).out[0]).toMatchObject({ kind: 'lossNp', deferred: { at: 'turnEnd', turns: 2 } });
+    expect(trig('selfturnendFunction', 2, { Turn: 3, Count: 1 }).out[0].deferred).toEqual({ at: 'turnEnd', turns: 1 });
+    expect(trig('selfturnendFunction', 2, { Turn: -1, Count: -1 })).toMatchObject({ out: [], restrict: ['trigger:selfturnendFunction:func:lossNp'] });
+  });
+  it('a harmful or unknown end-of-turn effect: last turn only; a helpful one we cannot model: dropped', () => {
+    expect(trig('selfturnendFunction', 3)).toMatchObject({ out: [], unsupported: [], restrict: ['trigger:selfturnendFunction:buff:donotAct'] });
+    expect(trig('selfturnendFunction', 5)).toMatchObject({ out: [], restrict: ['trigger:selfturnendFunction:func:lossNp'] });
+    // Charge for the whole party from a buff one unit holds: not the holder's own.
+    expect(trig('delayFunction', 4)).toMatchObject({ out: [], unsupported: [], restrict: [], drops: ['trigger:delayFunction:inner:gainNp@ptAll'] });
+  });
+  it('buffRate: modelled on tracked traits, dropped otherwise, unsupported when negative', () => {
+    const br = (ids: number[], Value = 500) => ({
+      ...buff('buffRate', 'self', { Value }),
+      buffs: [{ type: 'buffRate', ckSelfIndv: [], ckOpIndv: [], script: { UpBuffRateBuffIndiv: ids.map((id) => ({ id })) } }],
+    });
+    expect(run([br([3030])]).out[0]).toMatchObject({ kind: 'buffRate', rateOf: [3030] });
+    expect(run([br([3027])])).toMatchObject({ out: [], drops: ['buffRate:untracked'] });
+    expect(run([br([3030], -500)]).unsupported).toEqual(['buff:buffRate-']);
+  });
+  it('drop audit tags', () => {
+    expect(run([func('gainNp', 'self', { Rate: 500 })]).drops).toEqual(['rate:gainNp']);
+    expect(run([func('gainNp', 'self', { ActSet: 1 })]).drops).toEqual(['actSet:gainNp']);
+    expect(run([{ ...func('gainNp', 'ptAll'), functvals: [{ id: 5 }] }]).drops).toEqual(['cond:gainNp']);
   });
 });

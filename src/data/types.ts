@@ -5,7 +5,15 @@ export type TargetKind = 'self' | 'ptOne' | 'ptAll' | 'ptOther' | 'enemy' | 'ene
 export type EffectKind =
   | 'atkUp' | 'cardUp' | 'npDmgUp' | 'powerUp' | 'npGainUp' | 'ocUp'
   | 'gainNp' | 'shortenSkill' | 'orderChange'
-  | 'dmgPlus';             // flat damage (addDamage), added after flooring (engine dmgPlus)
+  | 'dmgPlus'              // flat damage (addDamage), added after flooring (engine dmgPlus)
+  // Buff effectiveness up (Atlas buffRate, e.g. Oberon S3): while active, every
+  // buff of its holder that carries one of Effect.rateOf (buff traits) counts
+  // value * (1000 + sum of rates) / 1000, floored per buff, as in Chaldea's
+  // getBuffRateValue (total capped at 5000).
+  | 'buffRate'
+  // NP gauge loss of the holder. Only ever inside a deferred effect (end of
+  // turn), never immediate: the solver relies on immediate effects only helping.
+  | 'lossNp';
 
 // value 0 = "not guaranteed at this level" (chance-based or a failed dependent
 // follow-up): the effect does nothing there. The solver must treat orderChange
@@ -28,12 +36,49 @@ export interface Effect {
   // Chaldea's checkSignedIndivPartialMatch) / belongs to this event's war.
   fieldTraits?: number[];
   eventId?: number;
+  /** buffRate: the buff traits it amplifies (Atlas script.UpBuffRateBuffIndiv). */
+  rateOf?: number[];
+  /**
+   * Modelled buffs: the buff's own traits (Atlas buff.vals) that some buffRate
+   * can target (only the ones in compact.ts RATE_TRAITS, to keep the data small).
+   */
+  buffTraits?: number[];
+  /** Skill effects only: runs later on its target (the trigger buff's holder), see Deferred. */
+  deferred?: Deferred;
 }
+
+/**
+ * An effect run by a trigger buff at the end of a turn instead of now (T = the
+ * turn the skill is used; the battle ends with the last wave's kill, so an
+ * effect due at the end of the last turn never runs):
+ * - 'delay' (Atlas delayFunction, e.g. Ishtar's "Mana Burst Set"): runs once,
+ *   at the end of turn T + turns - 1 (Turn 1 = this turn's end, so a 1-turn
+ *   buff it grants is active on turn T + 1);
+ * - 'turnEnd' (selfturnendFunction, e.g. Oberon S2's NP drain): runs at the
+ *   end of each of turns T .. T + turns - 1.
+ * Ticks only while the holder is on the front line (back units are frozen).
+ */
+export interface Deferred { at: 'delay' | 'turnEnd'; turns: number; }
 
 /** Event bonus passive (Atlas extraPassive): active only in quests of these events. */
 export interface EventPassive { eventIds: number[]; effects: Effect[]; }
 
-export interface Skill { num: 1 | 2 | 3; cooldown: number[]; effects: Effect[]; }
+export interface Skill {
+  num: 1 | 2 | 3; cooldown: number[]; effects: Effect[];
+  /**
+   * Effects of this skill we cannot model (same format as CompactServant.unsupported).
+   * Non-empty = the skill is never used by the engine/solver (see usableServant);
+   * omitted when empty.
+   */
+  unsupported?: string[];
+  /**
+   * Non-empty = the skill may only be used on the last turn (the turn of the
+   * last wave): it installs an end-of-turn trigger we cannot model (e.g.
+   * Oberon S3 "Ending of Dreams": sleep at the end of the turn), which never
+   * runs when the battle is won that turn. The strings are the reasons. Omitted when empty.
+   */
+  lastTurnOnly?: string[];
+}
 
 export interface NoblePhantasm {
   card: Card;
@@ -44,6 +89,8 @@ export interface NoblePhantasm {
   hits: number[];          // npDistribution
   npRate: number[];        // npGain.np per npLv
   extra: Effect[];         // non-damage effects of the NP
+  /** Effects of the NP we cannot model. Non-empty = the NP never fires (see usableServant); omitted when empty. */
+  unsupported?: string[];
 }
 
 export interface CompactServant {
@@ -57,7 +104,32 @@ export interface CompactServant {
   eventPassives?: EventPassive[]; // omitted when empty
   append2: number[];       // starting NP charge per append level, in 0.01%
   np: NoblePhantasm | null;
-  unsupported: string[];   // unhandled effect types; empty = simulable
+  /**
+   * Servant-level unhandled effects (passives, append, event passives, form
+   * changes): they are always active, so non-empty = the servant is not
+   * usable at all. Skills and the NP carry their own lists (Skill.unsupported,
+   * NoblePhantasm.unsupported): an unsupported skill/NP only makes that part
+   * unavailable. partUnsupported() (compact.ts) summarises them for the UI.
+   */
+  unsupported: string[];
+  /**
+   * While this servant is in the party, allies having one of these traits
+   * cast no buffs (Oberon's passive: buff success rate down for Merlin). The
+   * engine drops every buff such a unit casts (CompactServant traits, any-of).
+   */
+  castBlockTraits?: number[];
+}
+
+/**
+ * Part-level marks of a servant, for display (compact.ts partUnsupported).
+ * skills: one entry per skill with unsupported effects (never used);
+ * lastTurnOnly: one per skill restricted to the last turn; np: the NP's
+ * unsupported effects (it never fires), null when the NP is fine or absent.
+ */
+export interface PartUnsupported {
+  skills: { num: number; reasons: string[] }[];
+  lastTurnOnly: { num: number; reasons: string[] }[];
+  np: string[] | null;
 }
 
 export interface CompactCE {

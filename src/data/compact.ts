@@ -1,6 +1,6 @@
 import type {
   Card, Effect, EffectKind, TargetKind, Skill, NoblePhantasm,
-  CompactServant, CompactCE, CompactMC, LevelVal, EventPassive,
+  CompactServant, CompactCE, CompactMC, LevelVal, EventPassive, Deferred, PartUnsupported,
 } from './types';
 
 // Raw Atlas Academy input is untyped JSON: `any` on the input side only.
@@ -31,6 +31,8 @@ const TARGET: Record<string, TargetKind> = {
 const BUFF_KIND: Record<string, EffectKind> = {
   upAtk: 'atkUp', upCommandall: 'cardUp', upNpdamage: 'npDmgUp',
   upDamage: 'powerUp', upDropnp: 'npGainUp', upChagetd: 'ocUp',
+  // Card attack up: the same Atlas buff action (commandAtk) as upCommandall.
+  upCommandatk: 'cardUp',
   // Flat extra damage per hit-sequence, added after flooring (engine dmgPlus).
   addDamage: 'dmgPlus',
 };
@@ -67,15 +69,23 @@ const IGNORED_BUFFS_ALLY = new Set([
   // debuff resist down (demerit): crits, stars, enemy debuffs and death are out
   // of the model.
   'downCriticalRateDamageTaken', 'downStarweight', 'upGrantInstantdeath', 'avoidInstantdeath',
+  // Our own crit damage / star drop down (CE demerits): crits and stars are out of the model.
+  'downCriticaldamage', 'downCriticalpoint',
   'downTolerance',
   // Adds a field trait: field conditions are any-of and checked on the quest's
   // own traits (questCond), so an added trait can only make us miss a bonus.
   // Removing one (subFieldIndividuality) is not listed: unsupported.
   'fieldIndividuality',
   // Stronger DoT received by the holder (Super Orion's "Corroding Poison"
-  // demerit): our servants are never under a DoT in the model (enemies do not
-  // act, and reduceHp on an ally is unsupported), so it never applies.
+  // demerit): a DoT on our side cannot kill (see reduceHp below), so a
+  // stronger one cannot either.
   'upFuncHpReduce',
+  // Damage over time on the holder (The Black Grail's HP loss, burn, poison,
+  // curse): it runs at a turn end, and in the model every turn ends with the
+  // wave cleared (endTurn requires it), where Chaldea (endOfMyTurn) caps the
+  // turn-end damage at HP - 1: it cannot kill, so it only touches HP, which
+  // nothing we model reads.
+  'reduceHp',
 ]);
 // On enemies: only effects that help us (weaker / stunned / slower enemies).
 // Ignoring them under-estimates our damage, which is the prudent direction.
@@ -112,6 +122,10 @@ const IGNORED_FUNCS_ALLY = new Set([
   // Bond/drop/event-point bonuses: no battle effect.
   'servantFriendshipUp', 'eventDropUp', 'eventPointUp', 'eventDropRateUp', 'eventPointRateUp',
   'expUp', 'qpUp', 'qpDropUp', 'userEquipExpUp',
+  // Friend points, encounter rates, drops and event points (Aerial Drive's
+  // event bonus, the support friend-point CEs): no battle effect.
+  'friendPointUp', 'friendPointUpDuplicate', 'enemyEncountRateUp', 'enemyEncountCopyRateUp', 'classDropUp',
+  'eventFortificationPointUp',
 ]);
 // hastenNpturn on an enemy (team player/playerAndEnemy) fills its charge bar:
 // enemies are not simulated as attackers, so a charged enemy NP never changes
@@ -144,10 +158,33 @@ const CHANCE_KEYS = ['ActSet', 'ActSelectIndex'];
 // player-side buffs, matches how we count turns).
 // checkIndvType: how ckSelfIndv/ckOpIndv lists match (any vs all). Identical
 // for lists of 0 or 1 traits, so it is accepted only then (see plain()).
-const BUFF_SCRIPT_KEYS = new Set(['ProgressSelfTurn', 'checkIndvType']);
+// UpBuffRateBuffIndiv: which buffs a buffRate amplifies (read by classify).
+const BUFF_SCRIPT_KEYS = new Set(['ProgressSelfTurn', 'checkIndvType', 'UpBuffRateBuffIndiv']);
+// Function script keys we accept: funcIndividuality = the function's own
+// traits, only when it is the "demerit" tag (3098). It only matters to effects
+// that block demerits, which we never model: ignoring them can only keep a
+// demerit we would in fact avoid.
+const DEMERIT_FUNC = 3098;
+/**
+ * Buff traits a buffRate may target (Effect.rateOf / buffTraits). In NA and JP
+ * the only buffRate (Oberon S3) targets buffNpDamageUp (3030), which every
+ * upNpdamage buff carries. A buffRate targeting another trait is dropped
+ * (helpful, so we only lose a bonus).
+ */
+export const RATE_TRAITS = new Set([3030]);
 const OC_SVALS = ['svals2', 'svals3', 'svals4', 'svals5'];
 
-type Class = { cls: 'apply'; kind: EffectKind } | { cls: 'ignore' } | { cls: 'unsupported'; reason: string };
+// ignore.drop: the effect is helpful but not modelled (reported by the drop audit).
+type Class = { cls: 'apply'; kind: EffectKind } | { cls: 'ignore'; drop?: string } | { cls: 'unsupported'; reason: string };
+
+const svalSets = (f: any): any[][] => [f.svals ?? [], ...OC_SVALS.map((k) => f[k]).filter(Boolean)];
+
+/** buffRate: its UpBuffRateBuffIndiv traits, when all of them are tracked (RATE_TRAITS); else null. */
+function rateTraitsOf(f: any): number[] | null {
+  const tv: any[] = f.buffs?.[0]?.script?.UpBuffRateBuffIndiv ?? [];
+  const ids = tv.map((t: any) => (t.negative ? -t.id : t.id));
+  return ids.length && ids.every((id: number) => RATE_TRAITS.has(id)) ? ids : null;
+}
 
 /** Raw Atlas skills (as returned by /nice/{region}/skill/{id}) by skill id. */
 export type TriggerLookup = Map<number, any>;
@@ -181,7 +218,7 @@ export function triggerSkillIds(f: any): number[] {
   return [...ids];
 }
 
-interface Ctx { triggers?: TriggerLookup; depth: number; flip: boolean; }
+interface Ctx { triggers?: TriggerLookup; depth: number; flip: boolean; allowLoss?: boolean; }
 
 // Sides inside a triggered skill are relative to the buff holder: when the
 // holder is an enemy, its "self" is the enemy side and its "enemy" is us.
@@ -216,7 +253,7 @@ function classifyTrigger(f: any, t: string, side: Side, ctx: Ctx): Class {
       if (c.cls === 'apply' && NOT_HELPFUL.has(c.kind)) return fail(c.kind);
     }
   }
-  return { cls: 'ignore' };
+  return { cls: 'ignore', drop: 'trigger:' + t };
 }
 
 function classify(f: any, ctx: Ctx = { depth: 0, flip: false }): Class {
@@ -227,11 +264,20 @@ function classify(f: any, ctx: Ctx = { depth: 0, flip: false }): Class {
     const t: string | undefined = f.buffs?.[0]?.type;
     if (!t) return { cls: 'unsupported', reason: 'buff:none' };
     if (side === 'ally' && BUFF_KIND[t]) return { cls: 'apply', kind: BUFF_KIND[t] };
+    if (side === 'ally' && t === 'buffRate') {
+      // A rate down (negative) would weaken our buffs: unsupported. A rate up only
+      // helps: modelled when it targets traits we track, else dropped.
+      if (svalSets(f).some((set) => set.some((v: any) => (v.Value ?? 0) < 0))) return { cls: 'unsupported', reason: 'buff:buffRate-' };
+      return rateTraitsOf(f) ? { cls: 'apply', kind: 'buffRate' } : { cls: 'ignore', drop: 'buffRate:untracked' };
+    }
     if ((side === 'ally' ? IGNORED_BUFFS_ALLY : IGNORED_BUFFS_ENEMY).has(t)) return { cls: 'ignore' };
     if (TRIGGER_BUFFS.has(t)) return classifyTrigger(f, t, side, ctx);
     return { cls: 'unsupported', reason: 'buff:' + t + at };
   }
   if (side === 'ally' && FUNC_KIND[f.funcType]) return { cls: 'apply', kind: FUNC_KIND[f.funcType] };
+  // Inside a deferred (end-of-turn) effect only: see EffectKind 'lossNp'.
+  if (side === 'ally' && ctx.allowLoss && f.funcType === 'lossNp') return { cls: 'apply', kind: 'lossNp' };
+  if (side === 'ally' && f.funcType === 'gainNpBuffIndividualSum') return { cls: 'ignore', drop: 'func:gainNpBuffIndividualSum' };
   if (side === 'ally' && f.funcType === 'subState') {
     const tv: number[] = (f.traitVals ?? []).map((t: any) => t.id);
     if (tv.length && tv.every((id) => DEBUFF_TRAITS.has(id))) return { cls: 'ignore' };
@@ -250,7 +296,8 @@ function plain(f: any, selfTraits?: Set<number>, quest = false): boolean {
   const tvOk = !tv.length || (f.funcTargetType === 'self' && !!selfTraits && tv.every((id) => selfTraits.has(id)));
   if (!tvOk || f.overWriteTvalsList?.length) return false;
   if (f.funcquestTvals?.length && !quest) return false;
-  if (f.script && Object.keys(f.script).length) return false;
+  if (f.script && Object.entries(f.script).some(([k, v]: [string, any]) =>
+    k !== 'funcIndividuality' || !Array.isArray(v) || v.some((t: any) => t.id !== DEMERIT_FUNC))) return false;
   for (const k of ['svals', ...OC_SVALS]) {
     for (const v of f[k] ?? []) if (Object.keys(v).some((key) => !SVAL_KEYS.has(key) && !(quest && key === 'EventId'))) return false;
   }
@@ -292,6 +339,77 @@ interface ConvOpts {
   npExtras?: boolean; // NP extras: fill Effect.oc when OC variants differ
   selfTraits?: Set<number>; // the servant's base traits (self functvals check)
   triggers?: TriggerLookup; // skills run by trigger buffs; absent = triggers unsupported
+  /**
+   * Servant skills only: end-of-turn triggers (delayFunction,
+   * selfturnendFunction) become deferred effects when possible (deferredOf);
+   * when not, a harmful one goes to `restrict` (the skill becomes last-turn
+   * only) instead of `unsupported`.
+   */
+  restrict?: string[];
+  /** Drop audit sink: one tag per helpful effect that is not modelled (see convertFunctions). */
+  drops?: string[];
+  /** Internal (deferred conversion): accept lossNp on the holder. */
+  allowLoss?: boolean;
+}
+
+/** End-of-turn trigger buffs that can become deferred effects (Effect.deferred). */
+const DEFER: Record<string, Deferred['at']> = { delayFunction: 'delay', selfturnendFunction: 'turnEnd' };
+// Kinds a deferred effect may have: buffs and charge on the holder, its NP
+// drain, a cooldown cut. Not orderChange.
+const DEFER_KINDS = new Set<EffectKind>(['atkUp', 'cardUp', 'npDmgUp', 'powerUp', 'npGainUp', 'ocUp', 'dmgPlus', 'buffRate', 'gainNp', 'lossNp', 'shortenSkill']);
+
+/*
+ * An end-of-turn trigger buff given to an ally (f: addState of delayFunction /
+ * selfturnendFunction), as effects that run on the holder later. Chaldea
+ * (svt_entity.dart endOfMyTurn / endOfYourTurn): a delayFunction with Turn N
+ * fires its skill once, when the buff expires, i.e. at the end of the N-th
+ * turn (the triggered skill at level Value2); a selfturnendFunction fires its
+ * skill at the end of each of the holder's turns while it lasts (Turn turns,
+ * Count uses). Only for triggered skills whose every function runs on the
+ * holder itself and converts to a DEFER_KIND under no condition (or is
+ * ignored). Returns the effects, or a reason string.
+ */
+function deferredOf(f: any, at: Deferred['at'], opts: ConvOpts): Effect[] | string {
+  const target = TARGET[f.funcTargetType];
+  if (!target || target === 'orderChange') return 'target';
+  if (!opts.triggers) return 'noLookup';
+  const svals: any[] = f.svals ?? [];
+  // Value2 = the triggered skill's level: part of the trigger, not a condition.
+  const noLevel = (v: any) => { const o = { ...v }; delete o.Value2; return o; };
+  if (!plain({ ...f, svals: svals.map(noLevel) }, opts.selfTraits)) return 'cond';
+  if (!svals.length) return 'noSkill';
+  const ids = new Set(svals.map((v) => v.Value));
+  if (ids.size !== 1) return 'skillPerLevel';
+  if (svals.some((v) => isChancy(v) || (v.Rate ?? 1000) < 1000)) return 'rate';
+  const turnSet = new Set(svals.map((v) => `${v.Turn ?? -1},${v.Count ?? -1}`));
+  if (turnSet.size !== 1) return 'turnsPerLevel';
+  const turn = svals[0].Turn ?? -1, count = svals[0].Count ?? -1;
+  let turns: number;
+  if (at === 'delay') {
+    if (turn < 1) return 'noDelay';
+    turns = turn;
+  } else {
+    turns = count > 0 && turn > 0 ? Math.min(count, turn) : count > 0 ? count : turn;
+    if (!(turns > 0)) return 'unbounded';
+  }
+  const id = [...ids][0];
+  const skill = opts.triggers.get(id);
+  if (!skill) return 'missing:' + id;
+  const out: Effect[] = [];
+  for (const g of skill.functions ?? []) {
+    if (g.funcTargetTeam === 'enemy') continue; // runs only when an enemy holds it
+    // The triggered skill at level Value2 of each outer level.
+    const lvSvals = svals.map((v) => g.svals?.[(v.Value2 ?? 1) - 1] ?? g.svals?.[0]);
+    if (lvSvals.some((v) => !v)) return 'noLevel';
+    const inner: string[] = [];
+    const es = convertFunctions([{ ...g, svals: lvSvals }], inner, { triggers: opts.triggers, allowLoss: true, drops: opts.drops });
+    if (inner.length) return inner[0];
+    for (const e of es) {
+      if (e.target !== 'self' || !DEFER_KINDS.has(e.kind)) return 'inner:' + e.kind + '@' + e.target;
+      out.push({ ...e, target, deferred: { at, turns } });
+    }
+  }
+  return out;
 }
 
 /*
@@ -307,9 +425,18 @@ interface ConvOpts {
  * - ActSet / ActSelectIndex (random or player-chosen option): not guaranteed,
  *   handled like 0 <= Rate < 1000.
  * Rate is evaluated per level, since it can vary across levels.
+ * lossNp (deferred only) must be guaranteed at every level: a drain we cannot
+ * count on either way is unsupported.
+ *
+ * Drop audit (opts.drops): a helpful effect that is not modelled is tagged
+ * '<why>:<kind or type>' with why = rate (not guaranteed at the top level),
+ * actSet (random / chosen option at the top level), cond (condition we cannot
+ * evaluate), holderTrait (condition on the holder's traits), trigger (trigger
+ * buff whose skill only helps), buffRate / func (helpful kind not modelled).
  */
 export function convertFunctions(funcs: any[], unsupported: string[], opts: ConvOpts = {}): Effect[] {
   const out: Effect[] = [];
+  const drop = (tag: string) => opts.drops?.push(tag);
   let prevOk = false;
   let afterDamage = false;
   for (const f of funcs) {
@@ -319,7 +446,7 @@ export function convertFunctions(funcs: any[], unsupported: string[], opts: Conv
     const svals: any[] = f.svals ?? [];
     // svals = OC1; svals2..svals5 = OC2..OC5 (NP functions only). The Rate rule
     // applies to every OC variant; plain() checks the keys of all of them.
-    const sets: any[][] = [svals, ...OC_SVALS.map((k) => f[k]).filter(Boolean)];
+    const sets: any[][] = svalSets(f);
     const isPlain = plain(f, opts.selfTraits);
     // Not plain only because of quest conditions: kept with them when evaluable.
     const qc = isPlain ? {} : plain(f, opts.selfTraits, true) ? questCond(f) : null;
@@ -332,20 +459,43 @@ export function convertFunctions(funcs: any[], unsupported: string[], opts: Conv
     const lvOk = setOk[0];
     prevOk = SIDE[f.funcTargetType] === 'ally' && isPlain && lvOk.length > 0 && setOk.every((s) => s.every(Boolean));
 
-    const c = classify(f, { triggers: opts.triggers, depth: 0, flip: false });
-    if (c.cls === 'ignore') continue;
+    const ctx: Ctx = { triggers: opts.triggers, depth: 0, flip: false, allowLoss: opts.allowLoss };
+    const bt: string | undefined = f.buffs?.[0]?.type;
+    const isState = f.funcType === 'addState' || f.funcType === 'addStateShort';
+    const at = isState && bt ? DEFER[bt] : undefined;
+    if (at && opts.restrict && SIDE[f.funcTargetType] === 'ally') {
+      const d = deferredOf(f, at, opts);
+      if (typeof d !== 'string') { out.push(...d); continue; }
+      const c = classify(f, ctx);
+      if (c.cls === 'ignore') { if (c.drop) drop(c.drop + ':' + d); continue; }
+      // Harmful or unknown, but it only runs at a turn end: fine on the last turn.
+      opts.restrict.push(c.cls === 'unsupported' ? c.reason : 'trigger:' + bt + ':' + d);
+      continue;
+    }
+    const c = classify(f, ctx);
+    if (c.cls === 'ignore') { if (c.drop) drop(c.drop); continue; }
     if (c.cls === 'unsupported') { unsupported.push(c.reason); continue; }
     // Helpful effect under a condition we cannot evaluate: dropped (we only lose
     // a bonus). A non-helpful one is unsupported, quest conditions included.
-    if (!isPlain && (!qc || NOT_HELPFUL.has(c.kind))) { if (NOT_HELPFUL.has(c.kind)) unsupported.push('cond:' + f.funcType); continue; }
-    if (!setOk.some((s) => s.some(Boolean))) continue;
+    if (!isPlain && (!qc || NOT_HELPFUL.has(c.kind))) {
+      if (NOT_HELPFUL.has(c.kind)) unsupported.push('cond:' + f.funcType);
+      else drop('cond:' + c.kind);
+      continue;
+    }
+    if (c.kind === 'lossNp') {
+      if (!setOk.every((s) => s.every(Boolean))) { unsupported.push('func:lossNp:rate'); continue; }
+    } else {
+      const top = svals.length - 1;
+      if (top >= 0 && !lvOk[top]) drop((isChancy(svals[top]) ? 'actSet:' : 'rate:') + c.kind);
+      if (!setOk.some((s) => s.some(Boolean))) continue;
+    }
 
     // lv = OC1 values: code that ignores OC stays conservative for helpful effects.
     const e: Effect = { kind: c.kind, target: TARGET[f.funcTargetType], lv: levels(svals, lvOk), ...qc };
     if (opts.npExtras && sets.length === 5 && sets.some((s) => JSON.stringify(s) !== JSON.stringify(svals))) {
       e.oc = sets.map((s, i) => levels(s, setOk[i]));
     }
-    if (f.funcType === 'addState' || f.funcType === 'addStateShort') {
+    if (isState) {
       const b = f.buffs[0];
       const self: number[] = (b.ckSelfIndv ?? []).map((t: any) => t.id);
       const op: number[] = (b.ckOpIndv ?? []).map((t: any) => t.id);
@@ -353,10 +503,15 @@ export function convertFunctions(funcs: any[], unsupported: string[], opts: Conv
         // Empty ckSelfIndv = unconditioned: applies to every card, NP card included.
         const cards = self.length ? self.map((id) => CARD_BY_TRAIT[id]).filter(Boolean) : ALL_CARDS;
         // A non-card trait in ckSelfIndv is a holder condition: dropped (helpful).
-        if (cards.length !== self.length && self.length) continue;
+        if (cards.length !== self.length && self.length) { drop('holderTrait:' + c.kind); continue; }
         e.cards = cards;
-      } else if (self.length) continue; // holder-trait condition on a helpful buff: dropped
+      } else if (self.length) { drop('holderTrait:' + c.kind); continue; } // holder-trait condition on a helpful buff
       if (op.length) e.opTraits = op;
+      if (c.kind === 'buffRate') e.rateOf = rateTraitsOf(f)!;
+      else {
+        const tr: number[] = (b.vals ?? []).map((t: any) => t.id).filter((id: number) => RATE_TRAITS.has(id));
+        if (tr.length) e.buffTraits = tr;
+      }
     }
     if (opts.npDamage && !afterDamage) e.pre = true;
     out.push(e);
@@ -364,17 +519,32 @@ export function convertFunctions(funcs: any[], unsupported: string[], opts: Conv
   return out;
 }
 
-function skillsOf(raw: any[], unsupported: string[], base: ConvOpts): Skill[] {
+/** Drop audit: the helpful effects a part does not model (see convertFunctions). part: s1..s3, np, passive, ce, ceMlb. */
+export interface PartDrops { part: string; drops: string[]; }
+
+const uniq = (xs: string[]) => [...new Set(xs)];
+
+function skillsOf(raw: any[], base: ConvOpts, report?: PartDrops[]): Skill[] {
   // Same num appears once per upgrade (rank-up/interlude): highest priority wins.
   const byNum = new Map<number, any>();
   for (const s of raw) if (!byNum.has(s.num) || s.priority > byNum.get(s.num).priority) byNum.set(s.num, s);
-  return [...byNum.values()].sort((a, b) => a.num - b.num)
-    .map((s) => ({ num: s.num, cooldown: s.coolDown, effects: convertFunctions(s.functions, unsupported, base) }));
+  return [...byNum.values()].sort((a, b) => a.num - b.num).map((s) => {
+    // Per skill: what it cannot model makes only this skill unavailable.
+    const unsupported: string[] = [], restrict: string[] = [], drops: string[] = [];
+    const effects = convertFunctions(s.functions, unsupported, { ...base, restrict, drops });
+    if (drops.length) report?.push({ part: 's' + s.num, drops: uniq(drops) });
+    return {
+      num: s.num, cooldown: s.coolDown, effects,
+      ...(unsupported.length && { unsupported: uniq(unsupported) }),
+      ...(restrict.length && { lastTurnOnly: uniq(restrict) }),
+    };
+  });
 }
 
 const isDamage = (f: any) => f.funcType.startsWith('damageNp');
 
-function npOf(svt: any, unsupported: string[], base: ConvOpts): NoblePhantasm | null {
+/** servantLevel: for what concerns the whole servant (an NP card we cannot read: no NP at all). */
+function npOf(svt: any, servantLevel: string[], base: ConvOpts, report?: PartDrops[]): NoblePhantasm | null {
   // Highest priority NP is the current one (last wins ties).
   let np: any = null;
   for (const n of svt.noblePhantasms) if (!np || n.priority >= np.priority) np = n;
@@ -383,7 +553,8 @@ function npOf(svt: any, unsupported: string[], base: ConvOpts): NoblePhantasm | 
   const dmg = np.functions.find(isDamage);
   if (!dmg) return null;
   const card = CARD_BY_ID[String(np.card)];
-  if (!card) { unsupported.push('np:card:' + np.card); return null; }
+  if (!card) { servantLevel.push('np:card:' + np.card); return null; }
+  const unsupported: string[] = [], drops: string[] = [];
   const se = dmg.funcType === 'damageNpIndividual';
   // damageNpPierce = damageNp that ignores enemy DEF buffs. Enemy DEF buffs are
   // not in the model (enemies do not act), so it computes exactly like damageNp.
@@ -392,6 +563,9 @@ function npOf(svt: any, unsupported: string[], base: ConvOpts): NoblePhantasm | 
   if (!plain(dmg)) unsupported.push('cond:' + dmg.funcType);
   const ocs: any[][] = [dmg.svals, ...OC_SVALS.map((k) => dmg[k])];
   if (ocs.some((oc) => oc.some((v) => (v.Rate ?? 1000) < 1000))) unsupported.push('np:rate');
+  // Any other damageNp* in the list is reported unsupported by convertFunctions.
+  const extra = convertFunctions(np.functions, unsupported, { ...base, npDamage: dmg, npExtras: true, drops });
+  if (drops.length) report?.push({ part: 'np', drops: uniq(drops) });
   return {
     card,
     aoe: dmg.funcTargetType === 'enemyAll',
@@ -400,8 +574,8 @@ function npOf(svt: any, unsupported: string[], base: ConvOpts): NoblePhantasm | 
     seTraits: se ? [dmg.svals[0].Target] : undefined,
     hits: np.npDistribution,
     npRate: np.npGain.np,
-    // Any other damageNp* in the list is reported unsupported by convertFunctions.
-    extra: convertFunctions(np.functions, unsupported, { ...base, npDamage: dmg, npExtras: true }),
+    extra,
+    ...(unsupported.length && { unsupported: uniq(unsupported) }),
   };
 }
 
@@ -445,9 +619,31 @@ function eventPassivesOf(svt: any, unsupported: string[], base: ConvOpts): Event
   return out;
 }
 
-/** `triggers`: skills run by trigger buffs (built by scripts/build-data.mjs).
- *  Without it, trigger buffs other than the on-hit ones are unsupported. */
-export function compactServant(svt: any, triggers?: TriggerLookup): CompactServant {
+/*
+ * Buff success rate down (downGrantstate) that a passive puts on some allies
+ * (Oberon: "Decrease Buff Success Rate for all [Merlin] allies", ptFull with
+ * functvals = the trait the ally must have). In Chaldea (add_state.dart) the
+ * caster's grantState is added to the function Rate, so a buff that ally casts
+ * at Rate 1000 drops below 100% and fails at the default threshold. Modelled
+ * as CompactServant.castBlockTraits: the engine drops every buff such an ally
+ * casts (also the Rate 5000 ones that would still pass: conservative). Returns
+ * the traits, or null when the function is not of that form.
+ */
+function castBlockOf(f: any): number[] | null {
+  if (f.funcType !== 'addState' && f.funcType !== 'addStateShort') return null;
+  if (f.buffs?.[0]?.type !== 'downGrantstate' || f.funcTargetTeam === 'enemy') return null;
+  if (!['ptAll', 'ptFull', 'ptOther', 'ptOtherFull'].includes(f.funcTargetType)) return null;
+  const tv: number[] = (f.functvals ?? []).map((t: any) => t.id);
+  if (!tv.length || tv.some((id) => id <= 0) || f.funcquestTvals?.length) return null;
+  return tv;
+}
+
+/**
+ * `triggers`: skills run by trigger buffs (built by scripts/build-data.mjs).
+ * Without it, trigger buffs other than the on-hit ones are unsupported.
+ * `report`: drop audit sink (helpful effects not modelled, per part).
+ */
+export function compactServant(svt: any, triggers?: TriggerLookup, report?: PartDrops[]): CompactServant {
   const unsupported: string[] = [];
   // appendPassive num 100..104 = append 1..5; append 2 (num 101) is "Load Magical Energy".
   const selfTraits = new Set<number>(svt.traits.map((t: any) => t.id));
@@ -461,18 +657,36 @@ export function compactServant(svt: any, triggers?: TriggerLookup): CompactServa
   }
   const append2 = svt.appendPassive?.find((a: any) => a.num === 101)?.skill;
   const eventPassives = eventPassivesOf(svt, unsupported, base);
+  const castBlock = new Set<number>();
+  const passiveDrops: string[] = [];
+  const passives = svt.classPassive.flatMap((p: any) => convertFunctions(p.functions.filter((f: any) => {
+    const tv = castBlockOf(f);
+    if (tv) tv.forEach((t) => castBlock.add(t));
+    return !tv;
+  }), unsupported, { ...base, drops: passiveDrops }));
+  if (passiveDrops.length) report?.push({ part: 'passive', drops: uniq(passiveDrops) });
   return {
     id: svt.id, collectionNo: svt.collectionNo, name: svt.name,
     face: faceOf(svt.extraAssets?.faces?.ascension),
     className: svt.className, attribute: svt.attribute, traits: svt.traits.map((t: any) => t.id),
     rarity: svt.rarity ?? 0,
     atkGrowth: svt.atkGrowth,
-    skills: skillsOf(svt.skills, unsupported, base),
-    passives: svt.classPassive.flatMap((p: any) => convertFunctions(p.functions, unsupported, base)),
+    skills: skillsOf(svt.skills, base, report),
+    passives,
     ...(eventPassives.length && { eventPassives }),
     append2: append2 ? append2.functions[0].svals.map((v: any) => v.Value) : [],
-    np: npOf(svt, unsupported, base),
-    unsupported: [...new Set(unsupported)],
+    np: npOf(svt, unsupported, base, report),
+    unsupported: uniq(unsupported),
+    ...(castBlock.size && { castBlockTraits: [...castBlock] }),
+  };
+}
+
+/** Part-level marks of a servant, for display (shape: PartUnsupported in types.ts). */
+export function partUnsupported(s: CompactServant): PartUnsupported {
+  return {
+    skills: s.skills.flatMap((k) => (k.unsupported?.length ? [{ num: k.num, reasons: k.unsupported }] : [])),
+    lastTurnOnly: s.skills.flatMap((k) => (k.lastTurnOnly?.length && !k.unsupported?.length ? [{ num: k.num, reasons: k.lastTurnOnly }] : [])),
+    np: s.np?.unsupported?.length ? s.np.unsupported : null,
   };
 }
 
@@ -485,7 +699,8 @@ export function compactServant(svt: any, triggers?: TriggerLookup): CompactServa
  * levels of one bonus, of which Chaldea runs at most one: a field-conditioned
  * effect whose traits overlap another skill of its group is dropped.
  */
-export function compactCE(ce: any, triggers?: TriggerLookup): CompactCE {
+/** report: drop audit sink (parts ce / ceMlb). */
+export function compactCE(ce: any, triggers?: TriggerLookup, report?: PartDrops[]): CompactCE {
   const unsupported: string[] = [];
   const nums = [...new Set<number>(ce.skills.map((s: any) => s.num))].sort((a, b) => a - b);
   const group = (num: number, mlb: boolean) => {
@@ -493,8 +708,8 @@ export function compactCE(ce: any, triggers?: TriggerLookup): CompactCE {
     const lb = ss.filter((s: any) => s.condLimitCount === 4);
     return mlb && lb.length ? lb : ss.filter((s: any) => (s.condLimitCount ?? 0) === 0);
   };
-  const conv = (mlb: boolean) => nums.flatMap((num) => {
-    const per: Effect[][] = group(num, mlb).map((s: any) => convertFunctions(s.functions, unsupported, { triggers }));
+  const conv = (mlb: boolean, drops: string[]) => nums.flatMap((num) => {
+    const per: Effect[][] = group(num, mlb).map((s: any) => convertFunctions(s.functions, unsupported, { triggers, drops }));
     if (per.length < 2) return per.flat();
     const traitsOf = (es: Effect[]) => new Set(es.flatMap((e) => e.fieldTraits ?? []));
     return per.flatMap((es, i) => {
@@ -502,12 +717,16 @@ export function compactCE(ce: any, triggers?: TriggerLookup): CompactCE {
       return es.filter((e) => !e.fieldTraits?.some((t) => others.has(t)));
     });
   });
-  return {
+  const dropsBase: string[] = [], dropsMlb: string[] = [];
+  const out: CompactCE = {
     id: ce.id, collectionNo: ce.collectionNo, name: ce.name, face: faceOf(ce.extraAssets?.faces?.equip),
     atkGrowth: ce.atkGrowth,
-    effects: conv(false), effectsMlb: conv(true),
+    effects: conv(false, dropsBase), effectsMlb: conv(true, dropsMlb),
     unsupported: [...new Set(unsupported)],
   };
+  if (dropsBase.length) report?.push({ part: 'ce', drops: uniq(dropsBase) });
+  if (dropsMlb.length) report?.push({ part: 'ceMlb', drops: uniq(dropsMlb) });
+  return out;
 }
 
 export function compactMC(mc: any, triggers?: TriggerLookup): CompactMC {
