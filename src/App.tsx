@@ -10,8 +10,9 @@ import { I18nProvider, LANGS, useLang, useT } from './i18n';
 import { AboutPage } from './pages/AboutPage';
 import { Footer } from './pages/Footer';
 import { LandingPage } from './pages/LandingPage';
+import { SettingsPage } from './pages/SettingsPage';
 
-type Tab = 'roster' | 'catalog' | 'solver';
+type Tab = 'roster' | 'catalog' | 'solver' | 'settings';
 const REGIONS: Region[] = ['NA', 'JP'];
 
 /** The site's mark (also the favicon's shape). */
@@ -76,6 +77,7 @@ function Shell() {
           <button className={tabCls('roster')} onClick={() => setTab('roster')}>{t.app.tabs.roster}</button>
           <button className={tabCls('catalog')} onClick={() => setTab('catalog')}>{t.app.tabs.catalog}</button>
           <button className={tabCls('solver')} onClick={() => setTab('solver')}>{t.app.tabs.solver}</button>
+          <button className={tabCls('settings')} onClick={() => setTab('settings')}>{t.app.tabs.settings}</button>
         </nav>}
       </header>
 
@@ -93,7 +95,7 @@ function Shell() {
           </div>
         )}
         {loading && <p className="text-night-400">{t.app.loading(region)}</p>}
-        {data && (tab === 'roster' ? <RosterPage /> : tab === 'catalog' ? <CatalogPage /> : <SolverPage />)}
+        {data && (tab === 'roster' ? <RosterPage /> : tab === 'catalog' ? <CatalogPage /> : tab === 'solver' ? <SolverPage /> : <SettingsPage />)}
       </main>}
       <Footer />
     </div>

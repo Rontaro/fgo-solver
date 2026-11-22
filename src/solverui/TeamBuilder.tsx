@@ -1,3 +1,4 @@
+import { getSettings } from '../app/settings';
 import { useEffect, useMemo, useState } from 'react';
 import type { CompactCE, CompactMC, CompactServant } from '../data/types';
 import type { OwnedServant } from '../roster/types';
@@ -30,6 +31,7 @@ type Picking = { slot: number; what: 'servant' | 'ce' };
 export function TeamBuilder({ slots, setSlots, servants, ces, mcs, owned, mcId, setMcId, maxS, setMaxS, isAuto, defaultMaxS }: Props) {
   const tt = useT();
   const t = tt.team;
+  const sup = getSettings().support;
   const [picking, setPicking] = useState<Picking | null>(null);
   const [menu, setMenu] = useState<number | null>(null);
   const ownedBy = useMemo(() => new Map(owned.map((o) => [o.collectionNo, o])), [owned]);
@@ -70,7 +72,7 @@ export function TeamBuilder({ slots, setSlots, servants, ces, mcs, owned, mcId, 
     const auto = s.kind === 'free' || s.kind === 'supportAuto';
     const ce = s.ceNo !== null ? ceBy.get(s.ceNo) : undefined;
     const parts = v ? partialParts(v) : [];
-    const stats = o ? `lv ${o.lv} · NP${o.npLv} · ${o.skillLv.join('/')}` : s.kind === 'support' ? t.supportStats : '';
+    const stats = o ? `lv ${o.lv} · NP${o.npLv} · ${o.skillLv.join('/')}` : s.kind === 'support' ? t.supportStats(sup.lv, sup.npLv, sup.skillLv.join('/')) : '';
     return (
       <div key={i} className={`relative flex flex-col gap-2 rounded-lg border p-2 ${i < 3
         ? 'border-gold-500/40 bg-night-950/60 shadow-[inset_3px_0_0_#d9b86c]'

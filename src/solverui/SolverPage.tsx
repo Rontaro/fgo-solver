@@ -1,3 +1,4 @@
+import { getSettings } from '../app/settings';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRegionData } from '../app/RegionData';
 import type { CompactMC } from '../data/types';
@@ -35,7 +36,7 @@ export function SolverPage() {
   const [slots, setSlots] = useState<SlotState[]>(() => Array.from({ length: 6 }, emptySlot));
   const [mcId, setMcId] = useState<number | null>(null);
   // null = the default for the run kind (autocomplete gets more time).
-  const [maxSOverride, setMaxS] = useState<number | null>(null);
+  const [maxSOverride, setMaxS] = useState<number | null>(() => getSettings().maxTimeS);
   const [running, setRunning] = useState(false);
   const [found, setFound] = useState<Found[]>([]);
   const [stats, setStats] = useState<Progress | SolveStats | null>(null);

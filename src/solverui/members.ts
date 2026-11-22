@@ -1,3 +1,4 @@
+import { getSettings } from '../app/settings';
 import type { CompactCE, CompactMC, CompactServant } from '../data/types';
 import type { TeamMember } from '../engine/state';
 import type { OwnedServant } from '../roster/types';
@@ -21,8 +22,11 @@ export function ownedToMember(o: OwnedServant, svt: CompactServant, key: string,
 }
 
 /** A support at lv 90, NP1, skills 10/10/10, fou 1000. */
+/** A friend support, with the stats of the Settings page (getSettings().support). */
 export function supportMember(svt: CompactServant, key: string, ce: CeChoice = NO_CE): TeamMember {
-  return ownedToMember({ collectionNo: svt.collectionNo, lv: 90, npLv: 1, skillLv: [10, 10, 10], append2Lv: 0, fou: 1000 }, svt, key, ce);
+  const d = getSettings().support;
+  const lv = Math.min(d.lv, svt.atkGrowth.length);
+  return ownedToMember({ collectionNo: svt.collectionNo, lv, npLv: d.npLv, skillLv: [...d.skillLv], append2Lv: 0, fou: d.fou }, svt, key, ce);
 }
 
 export function defaultMc(mcs: CompactMC[]): CompactMC | undefined {

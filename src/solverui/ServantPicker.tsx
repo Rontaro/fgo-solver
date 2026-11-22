@@ -1,3 +1,4 @@
+import { getSettings } from '../app/settings';
 import { useMemo, useState } from 'react';
 import type { CompactServant } from '../data/types';
 import { EMPTY_FILTERS, classLabel, classesOf, compareServants, filterServants, toggle, type SvtType } from '../catalog/catalog';
@@ -92,7 +93,7 @@ export function ServantPicker({ title, initialTab, servants, owned, usedRoster, 
           <Chip key={c} on={classes.includes(c)} onClick={() => setClasses(toggle(classes, c))}>{classLabel(c)}</Chip>
         ))}
       </div>
-      {tab === 'support' && <p className="text-xs text-night-500">{t.supportNote}</p>}
+      {tab === 'support' && <p className="text-xs text-night-500">{((sup) => t.supportNote(sup.lv, sup.npLv, sup.skillLv.join('/'), sup.fou))(getSettings().support)}</p>}
       {recentShown.length > 0 && (
         <div>
           <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-night-400">{t.recent}</p>
