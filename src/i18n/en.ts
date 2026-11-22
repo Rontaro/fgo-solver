@@ -272,7 +272,7 @@ export const en = {
   },
   footer: {
     disclaimer: 'Fan-made tool, not affiliated with or endorsed by Aniplex, Lasengle, DELiGHTWORKS or TYPE-MOON. Fate/Grand Order and all related assets belong to their respective owners.',
-    credits: "Game data and images from Atlas Academy. Battle mechanics cross-checked against Chaldea's Laplace simulator.",
+    credits: "Game data and images from Atlas Academy (atlasacademy.io), data licensed under ODC-BY 1.0. Battle mechanics cross-checked against Chaldea's Laplace simulator.",
     about: 'About & docs',
   },
   about: {
@@ -340,7 +340,7 @@ export const en = {
     },
     credits: {
       heading: 'Credits and legal',
-      atlas: 'Game data and images: Atlas Academy (atlasacademy.io).',
+      atlas: 'Game data and images: Atlas Academy (atlasacademy.io). The game data is published by Atlas Academy under the Open Data Commons Attribution License (ODC-BY 1.0); the servant images are served from their CDN.',
       chaldea: "Battle mechanics were cross-checked against Chaldea's Laplace simulator (chaldea.center), which inspired the rules. None of its code is included.",
       affiliation: 'This is a fan-made tool, not affiliated with or endorsed by Aniplex, Lasengle, DELiGHTWORKS or TYPE-MOON.',
       ownership: 'Fate/Grand Order and all related assets belong to their respective owners.',
