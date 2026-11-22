@@ -192,7 +192,7 @@ export const en = {
     noSolution: 'No solution.',
     noSolutionTimeLimit: 'No solution found within the time limit (search not exhaustive).',
     noSolutionStopped: 'No solution found before the search was stopped (search not exhaustive).',
-    missingDamage: (wave: number, pct: string) => `Reached wave ${wave}: ${pct}% damage short.`,
+    missingDamage: (wave: number, pct: string) => `Reached wave ${wave}: at least ${pct}% damage short (an optimistic estimate). No real line within 10% was found in the time limit: a longer max time may show the closest one.`,
     npNotCharged: (wave: number) => `Reached wave ${wave}: NP not charged.`,
     showText: 'show text',
     closestTitle: (pct: string) => `Closest line: ${pct}% of an enemy's HP left after the last NP`,

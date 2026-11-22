@@ -191,7 +191,7 @@ export const it: Messages = {
     noSolution: 'Nessuna soluzione.',
     noSolutionTimeLimit: 'Nessuna soluzione trovata entro il tempo massimo (ricerca non esaustiva).',
     noSolutionStopped: 'Nessuna soluzione trovata prima dello stop (ricerca non esaustiva).',
-    missingDamage: (wave, pct) => `Arrivato alla wave ${wave}: manca ${pct}% di danno.`,
+    missingDamage: (wave, pct) => `Arrivato alla wave ${wave}: manca almeno il ${pct}% di danno (stima ottimistica). Nessuna linea reale entro il 10% trovata nel tempo massimo: con più tempo può comparire la più vicina.`,
     npNotCharged: (wave) => `Arrivato alla wave ${wave}: NP non carico.`,
     showText: 'mostra testo',
     closestTitle: (pct: string) => `Linea più vicina: resta il ${pct}% degli HP di un nemico dopo l'ultimo NP`,
