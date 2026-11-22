@@ -22,13 +22,13 @@ function fetchQuest(region: Region, id: number, phase: number): Promise<RawQuest
   return p;
 }
 
-const inp = 'w-full rounded border border-zinc-700 bg-zinc-800 px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-sky-500';
+const inp = 'w-full rounded border border-night-700 bg-night-800 px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-gold-500';
 const MAX_RESULTS = 30;
 
 function TypeBadge({ type }: { type: string }) {
   const free = type === 'free';
   return (
-    <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${free ? 'bg-sky-900/60 text-sky-300' : 'bg-amber-900/60 text-amber-300'}`}>
+    <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${free ? 'bg-gold-900/60 text-gold-300' : 'bg-amber-900/60 text-amber-300'}`}>
       {free ? 'free' : 'event'}
     </span>
   );
@@ -42,7 +42,7 @@ function Star({ on, onToggle, name, tabIndex }: { on: boolean; onToggle: () => v
       title={on ? t.favRemoveTitle : t.favAddTitle}
       onMouseDown={(e) => e.preventDefault()}
       onClick={(e) => { e.stopPropagation(); onToggle(); }}
-      className={`shrink-0 rounded px-1 text-base leading-none ${on ? 'text-amber-400' : 'text-zinc-600 hover:text-zinc-300'}`}>
+      className={`shrink-0 rounded px-1 text-base leading-none ${on ? 'text-amber-400' : 'text-night-600 hover:text-night-300'}`}>
       {on ? '★' : '☆'}
     </button>
   );
@@ -114,26 +114,26 @@ export function QuestPicker({ region, wars, onChange }: { region: Region; wars: 
   const recentItems = recent.flatMap((r) => { const it = byId.get(r.id); return it ? [{ it, phase: r.phase }] : []; });
   const chip = (it: QuestItem, ph: number | undefined, key: string, star: boolean) => (
     <button key={key} type="button" onClick={() => choose(it, ph)} title={`${it.quest.name} · ${where(it)}`}
-      className="flex max-w-xs items-center gap-1 rounded-full border border-zinc-700 bg-zinc-800 px-2.5 py-0.5 text-xs hover:border-sky-600 hover:bg-zinc-700">
+      className="flex max-w-xs items-center gap-1 rounded-full border border-night-700 bg-night-800 px-2.5 py-0.5 text-xs hover:border-gold-600 hover:bg-night-700">
       {star && <span aria-hidden className="text-amber-400">★</span>}
       <span className="truncate">{it.quest.name}</span>
-      {ph !== undefined && it.quest.phases.length > 1 && <span className="text-zinc-500">({ph})</span>}
+      {ph !== undefined && it.quest.phases.length > 1 && <span className="text-night-500">({ph})</span>}
     </button>
   );
 
   return (
-    <section className="space-y-2 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
-      <h2 className="font-semibold">{t.heading}</h2>
+    <section className="panel space-y-3">
+      <h2 className="flex items-baseline gap-3"><span className="panel-num" aria-hidden="true">I</span><span className="panel-title">{t.heading}</span></h2>
       {item && phase !== null && (
-        <div className="flex flex-wrap items-center gap-2 rounded bg-zinc-800/60 px-3 py-2">
+        <div className="flex flex-wrap items-center gap-2 rounded bg-night-800/60 px-3 py-2">
           <Star on={favs.includes(item.quest.id)} onToggle={() => toggleFav(item.quest.id)} name={item.quest.name} />
           <span className="min-w-0 flex-1">
             <span className="block truncate font-medium">{item.quest.name}</span>
-            <span className="block truncate text-xs text-zinc-400">{where(item)}</span>
+            <span className="block truncate text-xs text-night-400">{where(item)}</span>
           </span>
           <TypeBadge type={item.quest.type} />
           {item.quest.phases.length > 1 && (
-            <details className="text-xs text-zinc-400">
+            <details className="text-xs text-night-400">
               <summary className="cursor-pointer select-none">{t.phase(phase)}</summary>
               <select aria-label={t.phaseLabel} className={`${inp} mt-1 w-auto`} value={phase} onChange={(e) => choose(item, Number(e.target.value))}>
                 {item.quest.phases.map((p) => <option key={p} value={p}>{t.phase(p)}</option>)}
@@ -158,30 +158,30 @@ export function QuestPicker({ region, wars, onChange }: { region: Region; wars: 
         <div className="space-y-1">
           {favItems.length > 0 && (
             <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-xs text-zinc-500">{t.favorites}</span>
+              <span className="text-xs text-night-500">{t.favorites}</span>
               {favItems.map((it) => chip(it, undefined, `f${it.quest.id}`, true))}
             </div>
           )}
           {recentItems.length > 0 && (
             <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-xs text-zinc-500">{t.recent}</span>
+              <span className="text-xs text-night-500">{t.recent}</span>
               {recentItems.map(({ it, phase: ph }) => chip(it, ph, `r${it.quest.id}`, false))}
             </div>
           )}
         </div>
       )}
       {query.trim() && (results.length === 0
-        ? <p className="text-sm text-zinc-500">{t.noResults}</p>
+        ? <p className="text-sm text-night-500">{t.noResults}</p>
         : (
-          <ul id={listId} role="listbox" aria-label={t.results} className="max-h-80 overflow-auto rounded border border-zinc-800">
+          <ul id={listId} role="listbox" aria-label={t.results} className="max-h-80 overflow-auto rounded border border-night-800">
             {results.map((it, i) => (
               <li key={it.quest.id} id={`${listId}-${i}`} role="option" aria-selected={i === active}
                 onClick={() => choose(it)} onMouseEnter={() => setActive(i)}
-                className={`flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm ${i === active ? 'bg-zinc-800' : ''}`}>
+                className={`flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm ${i === active ? 'bg-night-800' : ''}`}>
                 <Star on={favs.includes(it.quest.id)} onToggle={() => toggleFav(it.quest.id)} name={it.quest.name} tabIndex={-1} />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate">{it.quest.name}</span>
-                  <span className="block truncate text-xs text-zinc-500">{where(it)}</span>
+                  <span className="block truncate text-xs text-night-500">{where(it)}</span>
                 </span>
                 <TypeBadge type={it.quest.type} />
               </li>
@@ -189,7 +189,7 @@ export function QuestPicker({ region, wars, onChange }: { region: Region; wars: 
           </ul>
         ))}
       {err && <p className="text-sm text-red-400">{t.loadError(err)}</p>}
-      {quest && phase !== null && !picked && !err && <p className="text-sm text-zinc-400">{t.loading}</p>}
+      {quest && phase !== null && !picked && !err && <p className="text-sm text-night-400">{t.loading}</p>}
       {picked?.unsupported && (
         <div className="rounded border border-amber-900 bg-amber-950/50 px-3 py-2 text-sm text-amber-300">
           <p className="font-semibold">{t.unsupported}</p>
@@ -199,10 +199,10 @@ export function QuestPicker({ region, wars, onChange }: { region: Region; wars: 
       {picked && (
         <div className="grid gap-2 sm:grid-cols-3">
           {[...picked.raw.stages].sort((a, b) => a.wave - b.wave).map((st) => (
-            <div key={st.wave} className="rounded bg-zinc-800 p-2 text-sm">
-              <p className="font-semibold text-sky-400">{t.wave(st.wave)}</p>
+            <div key={st.wave} className="rounded bg-night-800 p-2 text-sm">
+              <p className="font-semibold text-gold-400">{t.wave(st.wave)}</p>
               {st.enemies.filter((e) => e.deck === 'enemy').sort((a, b) => a.deckId - b.deckId).map((e) => (
-                <p key={e.deckId}>{e.name} <span className="text-zinc-400">· {e.svt.className} · {e.hp.toLocaleString(tt.locale)} HP</span></p>
+                <p key={e.deckId}>{e.name} <span className="text-night-400">· {e.svt.className} · {e.hp.toLocaleString(tt.locale)} HP</span></p>
               ))}
             </div>
           ))}

@@ -115,6 +115,8 @@ export const en = {
   },
   team: {
     heading: 'Team',
+    frontLine: 'Front line',
+    backLine: 'Back line',
     kinds: {
       empty: 'Empty', roster: 'From roster', support: 'Support', free: 'Any (roster)', supportAuto: 'Any (support)',
     },
@@ -169,7 +171,8 @@ export const en = {
     ceNoMatch: 'No CEs match the search.',
   },
   solver: {
-    start: 'Start',
+    heading: 'Search',
+    start: 'Find 3T',
     stop: 'Stop',
     running: 'Running…',
     noQuest: 'Choose a quest.',
@@ -224,6 +227,7 @@ export const en = {
   },
   landing: {
     title: 'FGO 3T Solver',
+    eyebrow: 'Farming setup finder',
     pitch: 'Find 3-turn farming setups for Fate/Grand Order nodes, with your own servants or with supports.',
     cta: 'Open the solver',
     docs: 'Read the docs',

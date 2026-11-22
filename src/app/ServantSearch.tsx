@@ -27,7 +27,7 @@ export function ServantSearch<T extends Svt>({ items, onPick, placeholder, sub, 
         value={q} placeholder={placeholder} autoFocus={autoFocus}
         role="combobox" aria-expanded={results.length > 0} aria-controls={id} aria-autocomplete="list"
         aria-activedescendant={results[active] ? `${id}-${active}` : undefined}
-        className="w-full rounded border border-zinc-700 bg-zinc-800 px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-sky-500"
+        className="w-full rounded border border-night-700 bg-night-800 px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-gold-500"
         onChange={(e) => { setQ(e.target.value); setActive(0); setOpen(true); }}
         onFocus={() => setOpen(true)} onBlur={() => setOpen(false)}
         onKeyDown={(e) => {
@@ -38,15 +38,15 @@ export function ServantSearch<T extends Svt>({ items, onPick, placeholder, sub, 
         }}
       />
       {results.length > 0 && (
-        <ul id={id} role="listbox" className="absolute z-20 mt-1 max-h-80 w-full min-w-64 overflow-auto rounded border border-zinc-700 bg-zinc-900 shadow-lg">
+        <ul id={id} role="listbox" className="absolute z-20 mt-1 max-h-80 w-full min-w-64 overflow-auto rounded border border-night-700 bg-night-900 shadow-lg">
           {results.map((s, i) => (
             <li key={s.collectionNo} id={`${id}-${i}`} role="option" aria-selected={i === active}
               onMouseDown={(e) => e.preventDefault()} onClick={() => pick(s)} onMouseEnter={() => setActive(i)}
-              className={`flex cursor-pointer items-center gap-2 px-2 py-1 text-sm ${i === active ? 'bg-zinc-800' : ''}`}>
+              className={`flex cursor-pointer items-center gap-2 px-2 py-1 text-sm ${i === active ? 'bg-night-800' : ''}`}>
               <FaceIcon face={s.face} name={s.name} />
               <span className="min-w-0 flex-1">
                 <span className="block truncate">{s.name}</span>
-                <span className="block truncate text-xs text-zinc-500">{sub ? sub(s) : <span className="capitalize">{s.className}</span>}</span>
+                <span className="block truncate text-xs text-night-500">{sub ? sub(s) : <span className="capitalize">{s.className}</span>}</span>
               </span>
             </li>
           ))}

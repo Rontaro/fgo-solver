@@ -6,7 +6,7 @@ const FGA = import.meta.env.VITE_ENABLE_FGA !== 'false';
 function Section({ id, title, children }: { id: string; title: string; children: ReactNode }) {
   return (
     <section id={id} className="scroll-mt-4 space-y-3">
-      <h2 className="text-xl font-semibold text-sky-300">
+      <h2 className="font-display text-xl font-semibold tracking-wide text-gold-300">
         <a href={`#${id}`} className="hover:underline">{title}</a>
       </h2>
       {children}
@@ -14,7 +14,7 @@ function Section({ id, title, children }: { id: string; title: string; children:
   );
 }
 
-const H3 = ({ children }: { children: ReactNode }) => <h3 className="pt-2 font-semibold text-zinc-100">{children}</h3>;
+const H3 = ({ children }: { children: ReactNode }) => <h3 className="pt-2 font-semibold text-night-100">{children}</h3>;
 
 function List({ items, ordered }: { items: string[]; ordered?: boolean }) {
   const Tag = ordered ? 'ol' : 'ul';
@@ -44,13 +44,13 @@ export function AboutPage() {
   if (FGA) qa.push([faq.q4, faq.a4]);
 
   return (
-    <div className="mx-auto max-w-3xl space-y-10 px-4 py-10 text-zinc-300">
+    <div className="mx-auto max-w-3xl space-y-10 px-4 py-10 text-night-300">
       <header className="space-y-4">
-        <h1 className="text-3xl font-bold text-sky-400">{a.title}</h1>
-        <nav aria-label={a.toc} className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
-          <p className="mb-2 text-sm font-semibold text-zinc-400">{a.toc}</p>
+        <h1 className="font-display text-4xl font-bold tracking-wide text-gold-400">{a.title}</h1>
+        <nav aria-label={a.toc} className="rounded-xl border border-gold-500/25 bg-night-900 p-4">
+          <p className="mb-2 text-sm font-semibold text-night-400">{a.toc}</p>
           <ol className="list-decimal space-y-1 pl-5 text-sm">
-            {toc.map(([id, title]) => <li key={id}><a href={`#${id}`} className="text-sky-400 hover:underline">{title}</a></li>)}
+            {toc.map(([id, title]) => <li key={id}><a href={`#${id}`} className="text-gold-400 hover:underline">{title}</a></li>)}
           </ol>
         </nav>
       </header>
@@ -93,7 +93,7 @@ export function AboutPage() {
         <dl className="space-y-4">
           {qa.map(([q, ans]) => (
             <div key={q}>
-              <dt className="font-semibold text-zinc-100">{q}</dt>
+              <dt className="font-semibold text-night-100">{q}</dt>
               <dd className="mt-1">{ans}</dd>
             </div>
           ))}

@@ -18,7 +18,7 @@ const RARITIES = [5, 4, 3, 2, 1, 0];
 function FilterGroup({ title, children }: { title: string; children: ReactNode }) {
   return (
     <fieldset className="space-y-2">
-      <legend className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-400">{title}</legend>
+      <legend className="mb-1 text-xs font-semibold uppercase tracking-wide text-night-400">{title}</legend>
       <div className="flex flex-wrap gap-1.5">{children}</div>
     </fieldset>
   );
@@ -29,7 +29,7 @@ function ServantCard({ s, owned, onOpen }: { s: CompactServant; owned: boolean; 
   const unsupported = s.unsupported.length > 0;
   return (
     <ServantTile s={s} onClick={onOpen} dim={unsupported} corners={<>
-      {owned && <Corner pos="tr" cls="bg-sky-500" label={t.inRoster}>✓</Corner>}
+      {owned && <Corner pos="tr" cls="bg-gold-500 !text-night-950" label={t.inRoster}>✓</Corner>}
       {unsupported && <Corner pos="tl" cls="bg-amber-600" label={t.notSimulable}>!</Corner>}
     </>} />
   );
@@ -48,17 +48,17 @@ function Detail({ s, owned, busy, onAdd, onClose }: {
   return (
     <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/60 sm:items-center" onClick={onClose}>
       <div role="dialog" aria-label={s.name} onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-sm space-y-3 rounded-t-lg border border-zinc-700 bg-zinc-900 p-4 sm:rounded-lg">
+        className="w-full max-w-sm space-y-3 rounded-t-lg border border-night-700 bg-night-900 p-4 sm:rounded-lg">
         <div className="flex items-start gap-3">
           <FaceIcon face={s.face} name={s.name} size={64} />
           <div className="min-w-0 flex-1">
-            <h3 className="font-semibold text-zinc-100">{s.name}</h3>
-            <p className="text-sm text-zinc-400">{classLabel(s.className)} · <span className="text-amber-400">{starStr(s.rarity)}</span></p>
-            <p className="text-sm text-zinc-400">
+            <h3 className="font-semibold text-night-100">{s.name}</h3>
+            <p className="text-sm text-night-400">{classLabel(s.className)} · <span className="text-amber-400">{starStr(s.rarity)}</span></p>
+            <p className="text-sm text-night-400">
               NP: {s.np ? `${CARD_LABEL[s.np.card]} ${TYPE_LABEL[t]}` : tt.catalog.supportNoNp}
             </p>
           </div>
-          <button type="button" onClick={onClose} aria-label={tt.common.close} className="text-zinc-400 hover:text-zinc-100">✕</button>
+          <button type="button" onClick={onClose} aria-label={tt.common.close} className="text-night-400 hover:text-night-100">✕</button>
         </div>
         {s.unsupported.length > 0 && (
           <div className="rounded border border-amber-900 bg-amber-950/40 p-2 text-xs text-amber-300">
@@ -67,10 +67,10 @@ function Detail({ s, owned, busy, onAdd, onClose }: {
           </div>
         )}
         {owned
-          ? <p className="rounded bg-zinc-800 px-3 py-2 text-center text-sm text-sky-300">{tt.catalog.alreadyInRoster}</p>
+          ? <p className="rounded bg-night-800 px-3 py-2 text-center text-sm text-gold-300">{tt.catalog.alreadyInRoster}</p>
           : (
             <button type="button" onClick={onAdd} disabled={busy}
-              className="w-full rounded bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-500 disabled:opacity-50">
+              className="w-full rounded bg-gold-600 px-3 py-2 text-sm font-medium text-night-950 hover:bg-gold-500 disabled:opacity-50">
               {tt.catalog.addToRoster}
             </button>
           )}
@@ -134,17 +134,17 @@ export function CatalogPage() {
       <div className="flex flex-wrap items-center gap-2">
         <input type="search" value={query} onChange={(e) => setQuery(e.target.value)}
           placeholder={t.searchPlaceholder} aria-label={t.searchLabel}
-          className="min-w-0 flex-1 rounded border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-sky-500 focus:outline-none" />
+          className="min-w-0 flex-1 rounded border border-night-700 bg-night-800 px-3 py-2 text-sm text-night-100 placeholder:text-night-500 focus:border-gold-500 focus:outline-none" />
         <button type="button" onClick={() => setPanel(true)}
-          className="rounded border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-200 hover:border-zinc-500">
-          {t.filters}{nActive > 0 && <span className="ml-1.5 rounded-full bg-sky-600 px-1.5 text-xs text-white">{nActive}</span>}
+          className="rounded border border-night-700 bg-night-800 px-3 py-2 text-sm text-night-200 hover:border-night-500">
+          {t.filters}{nActive > 0 && <span className="ml-1.5 rounded-full bg-gold-600 px-1.5 text-xs text-night-950">{nActive}</span>}
         </button>
-        <div className="flex items-center gap-1 text-sm text-zinc-400">
+        <div className="flex items-center gap-1 text-sm text-night-400">
           <span className="hidden sm:inline">{t.groupBy}</span>
-          <div className="flex rounded bg-zinc-800 p-0.5" role="group" aria-label={t.groupBy}>
+          <div className="flex rounded bg-night-800 p-0.5" role="group" aria-label={t.groupBy}>
             {(['class', 'rarity'] as const).map((g) => (
               <button key={g} type="button" onClick={() => setGroupBy(g)} aria-pressed={groupBy === g}
-                className={`rounded px-2.5 py-1 ${groupBy === g ? 'bg-sky-600 text-white' : 'text-zinc-400 hover:text-zinc-200'}`}>
+                className={`rounded px-2.5 py-1 ${groupBy === g ? 'bg-gold-600 text-night-950' : 'text-night-400 hover:text-night-200'}`}>
                 {g === 'class' ? t.byClass : t.byRarity}
               </button>
             ))}
@@ -152,14 +152,14 @@ export function CatalogPage() {
         </div>
       </div>
 
-      <p className="text-xs text-zinc-500">{t.shown(shown, all.length)}</p>
+      <p className="text-xs text-night-500">{t.shown(shown, all.length)}</p>
       {error && <p className="rounded border border-red-900 bg-red-950/50 px-3 py-2 text-sm text-red-300">{t.saveError(error)}</p>}
 
-      {groups.length === 0 && <p className="text-sm text-zinc-400">{t.noMatch}</p>}
+      {groups.length === 0 && <p className="text-sm text-night-400">{t.noMatch}</p>}
       <div className="space-y-3">
         {groups.map((g) => (
-          <div key={g.key} className="flex overflow-hidden rounded border border-zinc-800 bg-zinc-900">
-            <div className="flex w-16 shrink-0 items-center justify-center bg-zinc-800 px-1 text-center text-xs font-semibold text-zinc-200 sm:w-24 sm:text-sm">
+          <div key={g.key} className="flex overflow-hidden rounded border border-night-800 bg-night-900">
+            <div className="flex w-16 shrink-0 items-center justify-center bg-night-800 px-1 text-center text-xs font-semibold text-night-200 sm:w-24 sm:text-sm">
               {g.label}
             </div>
             <div className="flex min-w-0 flex-1 flex-wrap gap-1 p-2">
@@ -174,14 +174,14 @@ export function CatalogPage() {
       {panel && (
         <div className="fixed inset-0 z-30 flex justify-end bg-black/50" onClick={() => setPanel(false)}>
           <aside role="dialog" aria-label={t.filters} onClick={(e) => e.stopPropagation()}
-            className="flex h-full w-full flex-col border-l border-zinc-800 bg-zinc-900 sm:w-96">
-            <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
-              <h2 className="font-semibold text-zinc-100">{t.filters}</h2>
+            className="flex h-full w-full flex-col border-l border-night-800 bg-night-900 sm:w-96">
+            <div className="flex items-center justify-between border-b border-night-800 px-4 py-3">
+              <h2 className="font-semibold text-night-100">{t.filters}</h2>
               <div className="flex items-center gap-2">
                 <button type="button" onClick={() => setFilters(EMPTY_FILTERS)} disabled={nActive === 0}
-                  className="rounded px-2 py-1 text-sm text-zinc-300 hover:text-white disabled:opacity-40">{t.reset}</button>
+                  className="rounded px-2 py-1 text-sm text-night-300 hover:text-white disabled:opacity-40">{t.reset}</button>
                 <button type="button" onClick={() => setPanel(false)} aria-label={t.closeFilters}
-                  className="rounded px-2 py-1 text-zinc-400 hover:text-zinc-100">✕</button>
+                  className="rounded px-2 py-1 text-night-400 hover:text-night-100">✕</button>
               </div>
             </div>
             <div className="flex-1 space-y-5 overflow-y-auto p-4">
@@ -214,9 +214,9 @@ export function CatalogPage() {
                 <Chip on={filters.hideUnsupported} onClick={() => set('hideUnsupported', !filters.hideUnsupported)}>{t.hideUnsupported}</Chip>
               </FilterGroup>
             </div>
-            <div className="border-t border-zinc-800 p-3">
+            <div className="border-t border-night-800 p-3">
               <button type="button" onClick={() => setPanel(false)}
-                className="w-full rounded bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-500">
+                className="w-full rounded bg-gold-600 px-3 py-2 text-sm font-medium text-night-950 hover:bg-gold-500">
                 {t.show(shown)}
               </button>
             </div>

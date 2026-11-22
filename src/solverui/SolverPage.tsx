@@ -162,17 +162,16 @@ export function SolverPage() {
       <QuestPicker region={region} wars={data.quests} onChange={setQuest} />
       <TeamBuilder slots={slots} setSlots={setSlots} servants={data.servants} ces={data.ces} mcs={data.mcs} owned={owned}
         mcId={mcId} setMcId={setMcId} maxS={maxS} setMaxS={setMaxS} isAuto={isAuto} defaultMaxS={defaultMaxS(isAuto)} />
-      <section className="space-y-3 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+      <section className={`panel space-y-4 ${sorted.length > 0 ? 'border-gold-500 shadow-[0_0_40px_rgba(217,184,108,0.12)]' : ''}`}>
+        <h2 className="flex items-baseline gap-3"><span className="panel-num" aria-hidden="true">III</span><span className="panel-title">{t.heading}</span></h2>
         <div className="flex flex-wrap items-center gap-3">
-          <button onClick={start} disabled={running || !!problem}
-            className="rounded bg-sky-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-sky-500 disabled:opacity-40">{t.start}</button>
-          <button onClick={stop} disabled={!running}
-            className="rounded bg-zinc-700 px-4 py-1.5 text-sm hover:bg-zinc-600 disabled:opacity-40">{t.stop}</button>
-          {problem && <span className="text-sm text-zinc-400">{problem}</span>}
-          {running && <span className="text-sm text-sky-400">{t.running}</span>}
+          <button onClick={start} disabled={running || !!problem} className="btn-primary min-h-11 px-8 font-display text-base font-bold tracking-widest">{t.start}</button>
+          <button onClick={stop} disabled={!running} className="btn-ghost min-h-11 disabled:opacity-40">{t.stop}</button>
+          {problem && <span className="text-sm text-night-400">{problem}</span>}
+          {running && <span className="text-sm text-gold-400">{t.running}</span>}
         </div>
         {stats && (
-          <p className="text-xs text-zinc-400">
+          <p className="text-xs text-night-400">
             {(stats.ms / 1000).toFixed(1)} s
             {'nodes' in stats ? t.statsNodes(stats.nodes.toLocaleString(tt.locale), stats.memoHits.toLocaleString(tt.locale))
               : t.statsTeams(stats.triedTeams)}
@@ -195,7 +194,7 @@ export function SolverPage() {
           </p>
         )}
         {run && sorted.length > 0 && (
-          <label className="flex items-center gap-2 text-xs text-zinc-400">
+          <label className="flex items-center gap-2 text-xs text-night-400">
             <input type="checkbox" checked={showText} onChange={(e) => setShowText(e.target.checked)} /> {t.showText}
           </label>
         )}
@@ -203,31 +202,31 @@ export function SolverPage() {
           const tk = f.team ?? [...run.front, ...run.back];
           const front = f.team ? tk.slice(0, 3) : run.front, back = f.team ? tk.slice(3) : run.back;
           return (
-            <div key={i} className="space-y-1 rounded bg-zinc-800 p-3 text-sm">
-              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-zinc-400">
+            <div key={i} className="space-y-3 rounded-lg border border-gold-500/25 bg-night-950/60 p-4 text-sm">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-night-400">
                 <span>{t.actions(f.solution.actions)}{f.solution.usesSwap ? t.orderChange : ''}</span>
                 <MarginBars margins={f.solution.margins} />
               </div>
               {f.team && (
-                <div className="flex flex-wrap items-center gap-1.5 text-sky-300">
-                  <span className="text-xs">{t.team}</span>
+                <div className="flex flex-wrap items-center gap-1.5 text-gold-300">
+                  <span className="text-xs uppercase tracking-wider">{t.team}</span>
                   {f.team.map((k) => <FaceIcon key={k} face={unit(k)?.svt.face} name={name(k)} size={28} />)}
                 </div>
               )}
               <TurnSteps turns={describeTurns(f.solution.turns, front, back, run.mc)} unit={unit}
                 enemyAt={(t, slot) => run.slotNames[t]?.[slot]} />
               {showText && (
-                <div className="border-t border-zinc-700 pt-1 text-xs text-zinc-300">
+                <div className="border-t border-night-700 pt-1 text-xs text-night-300">
                   {formatTurns(f.solution.turns, front, back, name, run.mc, tt.turns).map((l, j) => <p key={j}>{l}</p>)}
                 </div>
               )}
               {FGA && (
                 <div className="pt-1">
                   <div className="flex flex-wrap gap-2">
-                    <button onClick={() => downloadFga(f, tk, i + 1)} className="rounded bg-zinc-700 px-2 py-1 text-xs hover:bg-zinc-600">{t.downloadFga}</button>
-                    <button onClick={() => copyFga(f, tk)} className="rounded bg-zinc-700 px-2 py-1 text-xs hover:bg-zinc-600">{t.copyCommand}</button>
+                    <button onClick={() => downloadFga(f, tk, i + 1)} className="rounded-md border border-gold-500/40 px-2.5 py-1 text-xs text-gold-300 hover:border-gold-400">{t.downloadFga}</button>
+                    <button onClick={() => copyFga(f, tk)} className="rounded-md border border-gold-500/40 px-2.5 py-1 text-xs text-gold-300 hover:border-gold-400">{t.copyCommand}</button>
                   </div>
-                  <p className="mt-1 text-xs text-zinc-500">{t.fgaWarning}</p>
+                  <p className="mt-1 text-xs text-night-500">{t.fgaWarning}</p>
                 </div>
               )}
             </div>

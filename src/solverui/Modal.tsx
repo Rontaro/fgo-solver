@@ -18,14 +18,14 @@ export function Modal({ title, onClose, children, footer }: {
   return (
     <div className="fixed inset-0 z-40 flex items-stretch justify-center bg-black/60 sm:items-center sm:p-6" onClick={onClose}>
       <div role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()}
-        className="flex h-full w-full flex-col bg-zinc-900 sm:h-auto sm:max-h-[90vh] sm:max-w-4xl sm:rounded-lg sm:border sm:border-zinc-700">
-        <div className="flex items-center justify-between gap-2 border-b border-zinc-800 px-4 py-3">
-          <h2 className="min-w-0 truncate font-semibold text-zinc-100">{title}</h2>
+        className="flex h-full w-full flex-col bg-night-900 sm:h-auto sm:max-h-[90vh] sm:max-w-4xl sm:rounded-lg sm:border sm:border-night-700">
+        <div className="flex items-center justify-between gap-2 border-b border-night-800 px-4 py-3">
+          <h2 className="min-w-0 truncate font-semibold text-night-100">{title}</h2>
           <button type="button" onClick={onClose} aria-label={t.common.close}
-            className="rounded px-2 py-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">✕</button>
+            className="rounded px-2 py-1 text-night-400 hover:bg-night-800 hover:text-night-100">✕</button>
         </div>
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">{children}</div>
-        {footer && <div className="border-t border-zinc-800 p-3">{footer}</div>}
+        {footer && <div className="border-t border-night-800 p-3">{footer}</div>}
       </div>
     </div>
   );

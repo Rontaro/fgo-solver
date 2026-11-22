@@ -12,9 +12,9 @@ export type SlotKind = 'empty' | 'roster' | 'support' | 'free' | 'supportAuto';
 export interface SlotState { kind: SlotKind; collectionNo: number | null; ceNo: number | null; ceLv: number; ceMlb: boolean }
 export const emptySlot = (): SlotState => ({ kind: 'empty', collectionNo: null, ceNo: null, ceLv: 100, ceMlb: false });
 
-const inp = 'rounded border border-zinc-700 bg-zinc-800 px-2 py-1 text-sm';
+const inp = 'rounded border border-night-700 bg-night-800 px-2 py-1 text-sm';
 const KIND_CLS: Record<SlotKind, string> = {
-  empty: 'text-zinc-500', roster: 'text-sky-300', support: 'text-emerald-300', free: 'text-amber-300', supportAuto: 'text-amber-300',
+  empty: 'text-night-500', roster: 'text-gold-300', support: 'text-emerald-300', free: 'text-amber-300', supportAuto: 'text-amber-300',
 };
 
 interface Props {
@@ -72,57 +72,59 @@ export function TeamBuilder({ slots, setSlots, servants, ces, mcs, owned, mcId, 
     const parts = v ? partialParts(v) : [];
     const stats = o ? `lv ${o.lv} · NP${o.npLv} · ${o.skillLv.join('/')}` : s.kind === 'support' ? t.supportStats : '';
     return (
-      <div key={i} className="relative flex flex-col gap-2 rounded-lg border border-zinc-800 bg-zinc-800/60 p-2">
+      <div key={i} className={`relative flex flex-col gap-2 rounded-lg border p-2 ${i < 3
+        ? 'border-gold-500/40 bg-night-950/60 shadow-[inset_3px_0_0_#d9b86c]'
+        : 'border-gold-500/15 bg-night-950/30'}`}>
         <div className="flex items-center justify-between gap-2 text-xs">
-          <span className="text-zinc-400">{label(i)}</span>
+          <span className="text-night-400">{label(i)}</span>
           <span className="flex items-center gap-1">
             {s.kind !== 'empty' && <span className={KIND_CLS[s.kind]}>{t.kinds[s.kind]}</span>}
             <button type="button" onClick={() => setMenu(menu === i ? null : i)} aria-haspopup="menu" aria-expanded={menu === i}
-              aria-label={t.slotMenu(label(i))} className="rounded px-1.5 leading-5 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100">⋯</button>
+              aria-label={t.slotMenu(label(i))} className="rounded px-1.5 leading-5 text-night-400 hover:bg-night-700 hover:text-night-100">⋯</button>
           </span>
         </div>
         {menu === i && (
           <>
             <div className="fixed inset-0 z-10" onClick={() => setMenu(null)} />
-            <div role="menu" className="absolute right-2 top-8 z-20 w-52 overflow-hidden rounded border border-zinc-700 bg-zinc-900 text-sm shadow-lg">
+            <div role="menu" className="absolute right-2 top-8 z-20 w-52 overflow-hidden rounded border border-night-700 bg-night-900 text-sm shadow-lg">
               {([['empty', t.clear], ['free', t.makeFree], ['supportAuto', t.makeSupportAuto]] as [SlotKind, string][]).map(([k, text]) => (
                 <button key={k} type="button" role="menuitem" onClick={() => { setSlots(slots.map((x, j) => (j === i ? { ...emptySlot(), kind: k } : x))); setMenu(null); }}
-                  className="block w-full px-3 py-2 text-left text-zinc-200 hover:bg-zinc-800">{text}</button>
+                  className="block w-full px-3 py-2 text-left text-night-200 hover:bg-night-800">{text}</button>
               ))}
             </div>
           </>
         )}
         <button type="button" onClick={() => setPicking({ slot: i, what: 'servant' })} title={t.pickServant(label(i))}
-          className="flex items-center gap-2 rounded p-1 text-left hover:bg-zinc-700/60">
+          className="flex items-center gap-2 rounded p-1 text-left hover:bg-night-700/60">
           {locked ? <FaceIcon face={v.face} name={v.name} size={56} />
             : (
               <span className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-md border-2 border-dashed text-2xl ${auto
-                ? 'border-amber-700 text-amber-400' : 'border-zinc-600 text-zinc-500'}`}>{auto ? '?' : '+'}</span>
+                ? 'border-amber-700 text-amber-400' : 'border-night-600 text-night-500'}`}>{auto ? '?' : '+'}</span>
             )}
           <span className="min-w-0 flex-1 text-sm">
             {locked ? (
               <>
-                <span className="block truncate text-zinc-100">{v.name}</span>
-                <span className="block truncate text-xs text-zinc-400">{stats}</span>
+                <span className="block truncate text-night-100">{v.name}</span>
+                <span className="block truncate text-xs text-night-400">{stats}</span>
                 <span className="flex flex-wrap gap-1 pt-0.5">
-                  {o && isDefaultOwned(o) && <span title={t.defaultsTitle} className="rounded bg-zinc-700 px-1 text-[10px] text-zinc-200">{t.defaults}</span>}
+                  {o && isDefaultOwned(o) && <span title={t.defaultsTitle} className="rounded bg-night-700 px-1 text-[10px] text-night-200">{t.defaults}</span>}
                   {parts.length > 0 && (
                     <span title={tt.picker.partialTitle(parts.map((p) => (p.part === 'np' ? tt.picker.np : tt.picker.skill(p.num ?? 0))).join(', '))}
                       className="rounded bg-amber-800/70 px-1 text-[10px] text-amber-100">{tt.picker.partial}</span>
                   )}
                 </span>
               </>
-            ) : <span className="block text-zinc-400">{auto ? t.anyHint : t.addServant}</span>}
+            ) : <span className="block text-night-400">{auto ? t.anyHint : t.addServant}</span>}
           </span>
         </button>
         {locked && (
           <button type="button" onClick={() => setPicking({ slot: i, what: 'ce' })} title={t.pickCe(label(i))}
-            className="flex items-center gap-2 rounded border-t border-zinc-700/60 p-1 pt-2 text-left hover:bg-zinc-700/60">
+            className="flex items-center gap-2 rounded border-t border-night-700/60 p-1 pt-2 text-left hover:bg-night-700/60">
             {ce ? <FaceIcon face={ce.face} name={ce.name} size={32} />
-              : <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-dashed border-zinc-600 text-zinc-500">+</span>}
+              : <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-dashed border-night-600 text-night-500">+</span>}
             <span className="min-w-0 flex-1 text-xs">
-              <span className="block truncate text-zinc-200">{ce ? ce.name : t.noCe}</span>
-              {ce && <span className="block text-zinc-400">lv {s.ceLv}{s.ceMlb ? ' · MLB' : ''}</span>}
+              <span className="block truncate text-night-200">{ce ? ce.name : t.noCe}</span>
+              {ce && <span className="block text-night-400">lv {s.ceLv}{s.ceMlb ? ' · MLB' : ''}</span>}
             </span>
           </button>
         )}
@@ -133,27 +135,32 @@ export function TeamBuilder({ slots, setSlots, servants, ces, mcs, owned, mcId, 
   const p = picking;
   const ps = p ? slots[p.slot] : null;
   return (
-    <section className="space-y-3 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
-      <h2 className="font-semibold">{t.heading}</h2>
+    <section className="panel space-y-4">
+      <h2 className="flex items-baseline gap-3"><span className="panel-num" aria-hidden="true">II</span><span className="panel-title">{t.heading}</span></h2>
       {presets.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5" title={t.presetTitle}>
-          <span className="text-xs text-zinc-400">{t.presets}</span>
+          <span className="text-xs text-night-400">{t.presets}</span>
           {presets.map(({ preset, fill }) => (
             <button key={preset.id} type="button" onClick={() => applyPreset(fill)}
-              className="rounded-full border border-zinc-700 bg-zinc-800 px-2.5 py-1 text-xs text-zinc-200 hover:border-sky-500">
+              className="rounded-full border border-gold-500/35 bg-night-950/70 px-3 py-1 text-xs text-night-100 hover:border-gold-400 hover:text-gold-200">
               {t.presetNames[preset.id as keyof typeof t.presetNames] ?? preset.id}
             </button>
           ))}
         </div>
       )}
-      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{slots.map(card)}</div>
+      <div className="space-y-2">
+        <p className="text-xs uppercase tracking-[0.18em] text-gold-500">{t.frontLine}</p>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{slots.slice(0, 3).map((s, i) => card(s, i))}</div>
+        <p className="pt-2 text-xs uppercase tracking-[0.18em] text-night-400">{t.backLine}</p>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{slots.slice(3).map((s, i) => card(s, i + 3))}</div>
+      </div>
       {isAuto && <p className="rounded border border-amber-900/70 bg-amber-950/30 px-3 py-2 text-xs text-amber-200">{t.notExhaustive}</p>}
-      <div className="flex flex-wrap items-center gap-3 text-sm">
+      <div className="flex flex-wrap items-center gap-3 border-t border-gold-500/15 pt-4 text-sm">
         <label className="flex items-center gap-2">{t.mysticCode}
           <select className={inp} value={mcId ?? ''} onChange={(e) => setMcId(Number(e.target.value))}>
             {mcs.map((m) => <option key={m.id} value={m.id}>{m.name}{m.unsupported.length ? t.mcUnsupported : ''}</option>)}
           </select>
-          <span className="text-zinc-400">lv 10</span>
+          <span className="text-night-400">lv 10</span>
         </label>
         <label className="flex items-center gap-2">{t.maxTime}
           <input type="number" min={1} max={600} className={`${inp} w-20`} value={maxS} onChange={(e) => setMaxS(Number(e.target.value) || defaultMaxS)} />

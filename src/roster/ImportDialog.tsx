@@ -33,9 +33,9 @@ export function ImportDialog({ current, next, onConfirm, onCancel, warnings }: P
   const t = useT();
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true">
-      <div className="w-full max-w-md rounded-lg border border-zinc-800 bg-zinc-900 p-5 shadow-xl">
+      <div className="w-full max-w-md rounded-xl border border-gold-500/25 bg-night-900 p-5 shadow-xl">
         <h2 className="mb-3 text-lg font-semibold">{t.importDialog.title}</h2>
-        <p className="mb-3 text-sm text-zinc-400">
+        <p className="mb-3 text-sm text-night-400">
           {t.importDialog.replace(current.servants.length, next.servants.length)}
         </p>
         <ul className="mb-5 space-y-1 text-sm">
@@ -45,8 +45,8 @@ export function ImportDialog({ current, next, onConfirm, onCancel, warnings }: P
         </ul>
         {warnings && warnings.length > 0 && <Warnings items={warnings} />}
         <div className="flex justify-end gap-2">
-          <button onClick={onCancel} className="rounded bg-zinc-800 px-3 py-1.5 text-sm hover:bg-zinc-700">{t.common.cancel}</button>
-          <button onClick={onConfirm} className="rounded bg-sky-600 px-3 py-1.5 text-sm font-medium hover:bg-sky-500">{t.common.confirm}</button>
+          <button onClick={onCancel} className="rounded bg-night-800 px-3 py-1.5 text-sm hover:bg-night-700">{t.common.cancel}</button>
+          <button onClick={onConfirm} className="rounded bg-gold-600 px-3 py-1.5 text-sm font-medium text-night-950 hover:bg-gold-500">{t.common.confirm}</button>
         </div>
       </div>
     </div>

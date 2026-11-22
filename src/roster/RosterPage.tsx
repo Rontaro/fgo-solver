@@ -26,7 +26,7 @@ function NumberCell({ value, min, max, onChange, label }: {
   return (
     <input
       type="number" min={min} max={max} value={text} aria-label={label}
-      className="w-16 rounded bg-zinc-800 px-1.5 py-0.5 text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-sky-500"
+      className="w-16 rounded bg-night-800 px-1.5 py-0.5 text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-gold-500"
       onChange={(e) => {
         setText(e.target.value);
         const n = Number(e.target.value);
@@ -99,7 +99,7 @@ export function RosterPage() {
   const addable = useMemo(() => (servants ? [...servants.values()].filter((s) => !owned.has(s.collectionNo)) : []),
     [servants, owned]);
 
-  if (!doc) return <p className="text-zinc-400">{t.roster.loading}</p>;
+  if (!doc) return <p className="text-night-400">{t.roster.loading}</p>;
 
   const words = queryWords(filter);
   const rows = doc.servants.filter((o) => {
@@ -173,8 +173,8 @@ export function RosterPage() {
     }
   };
 
-  const btn = 'rounded bg-zinc-800 px-3 py-1.5 text-sm hover:bg-zinc-700';
-  const input = 'w-full rounded bg-zinc-800 px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-sky-500';
+  const btn = 'rounded bg-night-800 px-3 py-1.5 text-sm hover:bg-night-700';
+  const input = 'w-full rounded bg-night-800 px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-gold-500';
 
   return (
     <section className="space-y-4">
@@ -203,10 +203,10 @@ export function RosterPage() {
         </div>
       )}
 
-      <div className="overflow-x-auto rounded-lg border border-zinc-800 bg-zinc-900">
+      <div className="overflow-x-auto rounded-xl border border-gold-500/25 bg-night-900">
         <table className="w-full text-sm">
-          <thead className="text-left text-xs uppercase text-zinc-500">
-            <tr className="border-b border-zinc-800">
+          <thead className="text-left text-xs uppercase text-night-500">
+            <tr className="border-b border-night-800">
               <th className="px-3 py-2">{t.roster.colServant}</th>
               <th className="px-3 py-2">{t.roster.colClass}</th>
               <th className="px-2 py-2">Lv</th>
@@ -224,17 +224,17 @@ export function RosterPage() {
               const s = servants?.get(o.collectionNo);
               const no = o.collectionNo;
               return (
-                <tr key={no} className="border-b border-zinc-800/60 last:border-0">
+                <tr key={no} className="border-b border-night-800/60 last:border-0">
                   <td className="px-3 py-1.5">
                     <div className="flex items-center gap-2">
                       <FaceIcon face={s?.face} name={s?.name ?? `#${no}`} />
                       <span>
-                        {s ? s.name : <span className="text-zinc-500">{t.roster.unknown(no)}</span>}
+                        {s ? s.name : <span className="text-night-500">{t.roster.unknown(no)}</span>}
                         <UnsupportedBadge s={s} />
                       </span>
                     </div>
                   </td>
-                  <td className="px-3 py-1.5 capitalize text-zinc-400">{s?.className ?? '—'}</td>
+                  <td className="px-3 py-1.5 capitalize text-night-400">{s?.className ?? '—'}</td>
                   <td className="px-2 py-1.5"><NumberCell label={t.roster.level} value={o.lv} min={1} max={120} onChange={(v) => setServant(no, { lv: v })} /></td>
                   <td className="px-2 py-1.5"><NumberCell label={t.roster.npLevel} value={o.npLv} min={1} max={5} onChange={(v) => setServant(no, { npLv: v })} /></td>
                   {[0, 1, 2].map((i) => (
@@ -249,20 +249,20 @@ export function RosterPage() {
               );
             })}
             {rows.length === 0 && (
-              <tr><td colSpan={10} className="px-3 py-6 text-center text-zinc-500">
+              <tr><td colSpan={10} className="px-3 py-6 text-center text-night-500">
                 {doc.servants.length === 0 ? t.roster.empty : t.roster.noMatch}
               </td></tr>
             )}
           </tbody>
         </table>
       </div>
-      <p className="text-xs text-zinc-500">
+      <p className="text-xs text-night-500">
         {t.roster.count(doc.servants.length)} · {saving ? t.roster.saving : t.roster.saved}
       </p>
 
       {chaldeaPick && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true">
-          <div className="w-full max-w-sm rounded-lg border border-zinc-800 bg-zinc-900 p-5 shadow-xl">
+          <div className="w-full max-w-sm rounded-xl border border-gold-500/25 bg-night-900 p-5 shadow-xl">
             <h2 className="mb-3 text-lg font-semibold">{t.roster.chooseAccount}</h2>
             <select
               aria-label={t.roster.account} value={chaldeaPick.index}
@@ -282,7 +282,7 @@ export function RosterPage() {
                     setImportError(e instanceof Error ? e.message : String(e));
                   }
                 }}
-                className="rounded bg-sky-600 px-3 py-1.5 text-sm font-medium hover:bg-sky-500"
+                className="rounded bg-gold-600 px-3 py-1.5 text-sm font-medium text-night-950 hover:bg-gold-500"
               >{t.common.continue}</button>
             </div>
           </div>

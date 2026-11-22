@@ -114,6 +114,8 @@ export const it: Messages = {
   },
   team: {
     heading: 'Squadra',
+    frontLine: 'Prima linea',
+    backLine: 'Seconda linea',
     kinds: {
       empty: 'Vuoto', roster: 'Dal roster', support: 'Support', free: 'Libero (roster)', supportAuto: 'Libero (support)',
     },
@@ -168,7 +170,8 @@ export const it: Messages = {
     ceNoMatch: 'Nessun CE corrisponde alla ricerca.',
   },
   solver: {
-    start: 'Avvia',
+    heading: 'Ricerca',
+    start: 'Trova 3T',
     stop: 'Ferma',
     running: 'In esecuzione…',
     noQuest: 'Scegli una quest.',
@@ -223,6 +226,7 @@ export const it: Messages = {
   },
   landing: {
     title: 'FGO 3T Solver',
+    eyebrow: 'Setup per il farming',
     pitch: 'Trova setup di farming in 3 turni per i nodi di Fate/Grand Order, con i tuoi servant o con i support.',
     cta: 'Apri il solver',
     docs: 'Leggi la guida',
