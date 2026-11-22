@@ -77,13 +77,13 @@ describe('fireNp: arts refund', () => {
     expect(r.state.enemies[0].hp).toBe(10_000_000 - D);
     expect(u(r.state).gauge).toBe(3 * 145);
   });
-  it('enemy dies on hit 2: 145 + 218 + 218', () => {
+  it('enemy dies on hit 2: 145 + 217 + 217', () => {
     const r = fireNp(withEnemies(s0, enemy({ hp: Math.floor(D * 0.3) })), 'u');
-    expect(u(r.state).gauge).toBe(145 + 218 + 218);
+    expect(u(r.state).gauge).toBe(145 + 217 + 217);
   });
   it('AoE refund sums over targets', () => {
     const r = fireNp(withEnemies(s0, enemy(), enemy({ hp: 1 })), 'u');
-    expect(u(r.state).gauge).toBe(3 * 145 + 3 * 218);
+    expect(u(r.state).gauge).toBe(3 * 145 + 3 * 217);
   });
   it('npGainUp and arts cardUp raise the refund', () => {
     const s = withBuffs(s0, { kind: 'npGainUp', value: 300, turns: 3, count: -1 },

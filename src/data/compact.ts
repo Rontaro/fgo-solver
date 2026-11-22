@@ -270,6 +270,13 @@ function classify(f: any, ctx: Ctx = { depth: 0, flip: false }): Class {
     if (!t) return { cls: 'unsupported', reason: 'buff:none' };
     if (side === 'ally' && BUFF_KIND[t]) return { cls: 'apply', kind: BUFF_KIND[t] };
     if (side === 'enemy' && ENEMY_DEBUFF_KIND[t] && ctx.depth === 0 && !ctx.flip) return { cls: 'apply', kind: ENEMY_DEBUFF_KIND[t] };
+    // Special attack up vs enemies in some state (burn, curse...: buff traits
+    // we do not track): helps, dropped. A negative value (a damage down) would
+    // hurt: unsupported.
+    if (side === 'ally' && (t === 'upDamageIndividuality' || t === 'upDamageIndividualityActiveonly')) {
+      if (svalSets(f).some((set) => set.some((v: any) => (v.Value ?? 0) < 0))) return { cls: 'unsupported', reason: 'buff:' + t + '-' };
+      return { cls: 'ignore', drop: 'buff:' + t };
+    }
     if (side === 'ally' && t === 'buffRate') {
       // A rate down (negative) would weaken our buffs: unsupported. A rate up only
       // helps: modelled when it targets traits we track, else dropped.
@@ -592,12 +599,40 @@ function npOf(svt: any, servantLevel: string[], base: ConvOpts, report?: PartDro
   if (!card) { servantLevel.push('np:card:' + np.card); return null; }
   const unsupported: string[] = [], drops: string[] = [];
   const se = dmg.funcType === 'damageNpIndividual';
-  // damageNpPierce = damageNp that ignores enemy DEF buffs. Enemy DEF buffs are
-  // not in the model (enemies do not act), so it computes exactly like damageNp.
-  const plainDmg = dmg.funcType === 'damageNp' || dmg.funcType === 'damageNpPierce';
-  if (!plainDmg && !se) unsupported.push('np:' + dmg.funcType);
-  if (!plain(dmg)) unsupported.push('cond:' + dmg.funcType);
   const ocs: any[][] = [dmg.svals, ...OC_SVALS.map((k) => dmg[k])];
+  // damageNpPierce = damageNp that ignores enemy DEF buffs: computing it with
+  // the enemy's DEF up (Enemy.defUp) only under-estimates it.
+  // Variants computed at their base rate (Chaldea damage.dart: specific attack
+  // rate 1000 unless a condition holds): damageNpStateIndividualFix (vs an
+  // enemy in some state: burn, charm... we do not track), damageNpRare (vs
+  // enemies of some rarity), damageNpHpratioLow (more damage the lower the
+  // servant's HP: ours never drops, HP loss is not modelled). Under-estimates.
+  const BASE_RATE: Record<string, string[]> = {
+    damageNpStateIndividualFix: ['Target', 'Correction', 'IncludeIgnoreIndividuality'],
+    damageNpRare: ['Target', 'Correction', 'TargetRarityList'],
+    damageNpHpratioLow: ['Target'],
+    damageNpIndividualSum: ['Target', 'TargetList', 'Correction', 'Value2', 'ParamAddMaxCount', 'IncludeIgnoreIndividuality', 'IgnoreIndivUnreleaseable'],
+  };
+  const isSum = dmg.funcType === 'damageNpIndividualSum';
+  const plainDmg = dmg.funcType === 'damageNp' || dmg.funcType === 'damageNpPierce' || !!BASE_RATE[dmg.funcType];
+  if (!plainDmg && !se) unsupported.push('np:' + dmg.funcType);
+  const keys = BASE_RATE[dmg.funcType] ?? [];
+  const strip = (v: any) => { const o = { ...v }; for (const k of keys) delete o[k]; return o; };
+  const bare = { ...dmg, svals: dmg.svals.map(strip), ...Object.fromEntries(OC_SVALS.filter((k) => dmg[k]).map((k) => [k, dmg[k].map(strip)])) };
+  if (!plain(bare)) unsupported.push('cond:' + dmg.funcType);
+  let sum: NoblePhantasm['sum'];
+  if (isSum) {
+    const all = ocs.flat();
+    const v0 = dmg.svals[0];
+    const same = (k: string) => all.every((v) => JSON.stringify(v[k]) === JSON.stringify(v0[k]));
+    if (all.some((v) => !((v.Value2 ?? 0) >= 1000 && (v.Correction ?? 0) >= 0)) || !same('Target') || !same('TargetList') || !same('ParamAddMaxCount')
+      || !Array.isArray(v0.TargetList)) unsupported.push('np:damageNpIndividualSum:shape');
+    else sum = {
+      onEnemy: v0.Target === 1, traits: v0.TargetList,
+      base: ocs.map((oc) => oc.map((v) => v.Value2)), step: ocs.map((oc) => oc.map((v) => v.Correction ?? 0)),
+      max: v0.ParamAddMaxCount ?? 0,
+    };
+  }
   if (ocs.some((oc) => oc.some((v) => (v.Rate ?? 1000) < 1000))) unsupported.push('np:rate');
   // Any other damageNp* in the list is reported unsupported by convertFunctions.
   const extra = convertFunctions(np.functions, unsupported, { ...base, npDamage: dmg, npExtras: true, drops });
@@ -608,6 +643,7 @@ function npOf(svt: any, servantLevel: string[], base: ConvOpts, report?: PartDro
     mult: ocs.map((oc) => oc.map((v) => v.Value)),
     seMult: se ? ocs.map((oc) => oc.map((v) => v.Correction)) : undefined,
     seTraits: se ? [dmg.svals[0].Target] : undefined,
+    ...(sum && { sum }),
     hits: np.npDistribution,
     npRate: np.npGain.np,
     extra,

@@ -100,6 +100,14 @@ export interface NoblePhantasm {
   mult: number[][];        // [ocLv-1][npLv-1], permille
   seMult?: number[][];     // supereffective multiplier, permille
   seTraits?: number[];
+  /**
+   * damageNpIndividualSum: specific rate = base + count * step (capped at max
+   * counts when max > 0) when count > 0, else 1000. count = traits of the
+   * target enemy (onEnemy) or of the servant in `traits`; we count only their
+   * fixed traits (not buffs), a lower bound (base >= 1000, step >= 0).
+   * [ocLv-1][npLv-1], permille.
+   */
+  sum?: { onEnemy: boolean; traits: number[]; base: number[][]; step: number[][]; max: number };
   hits: number[];          // npDistribution
   npRate: number[];        // npGain.np per npLv
   extra: Effect[];         // non-damage effects of the NP

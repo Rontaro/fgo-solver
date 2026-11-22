@@ -7,8 +7,8 @@ describe('npGainPerHit', () => {
   it('Castoria-like arts NP, no overkill: floor(54*3*0.9) = 145', () => {
     expect(npGainPerHit({ ...castoria, overkill: false })).toBe(145);
   });
-  it('with overkill: floor(54*3*0.9*1.5) = 218', () => {
-    expect(npGainPerHit({ ...castoria, overkill: true })).toBe(218);
+  it('with overkill: floor(floor(54*3*0.9)*1.5) = floor(145*1.5) = 217 (Chaldea floors before the x1.5)', () => {
+    expect(npGainPerHit({ ...castoria, overkill: true })).toBe(217);
   });
   it('cardMod and npGainMod multiply: floor(54*3*1.5*0.9*1.3) = 284', () => {
     // 54*3*1.5*0.9*1.3 = 284.31
@@ -63,7 +63,7 @@ describe('npRefund', () => {
   it('sums per-hit gain using each hit overkill flag', () => {
     const { hits } = hitsOnEnemy(2000, splitHits(10000, [16, 33, 51]));
     // 1600 (hp 400, no OK), 3300 (OK), 5100 (OK)
-    expect(npRefund(castoria, hits)).toBe(145 + 218 + 218);
+    expect(npRefund(castoria, hits)).toBe(145 + 217 + 217);
   });
   it('buster NP refunds nothing', () => {
     const { hits } = hitsOnEnemy(100, [5000, 5000]);

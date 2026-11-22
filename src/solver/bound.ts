@@ -1,6 +1,7 @@
 import type { CompactMC, Constants, Effect, NoblePhantasm } from '../data/types';
 import { affinity, effectActive, isEnemyDebuff, layoutOf, type BattleState, type Buff, type Enemy, type Quest, type Unit } from '../engine/state';
 import { npDamage } from '../engine/damage';
+import { specificRate } from '../engine/np';
 
 /*
  * Optimistic damage bound, used to prune the search. For each wave from the
@@ -159,7 +160,7 @@ export function damageBound(s: BattleState, c: BoundCtx): BoundFail | null {
         const k = Math.min(5000, 1000 + rate) / 1000;
         const up = (v: number) => (rate > 0 && v > 0 ? v * k : v);
         const m = { atkMod: up(m0.atkMod), cardMod: up(m0.cardMod), npDmgMod: up(m0.npDmgMod), powerMod: up(m0.powerMod), dmgPlus: up(m0.dmgPlus) };
-        const se = np.seTraits && np.seMult && np.seTraits.some((t) => en.traits.includes(t)) ? maxRow(np.seMult, u.npLv) : 1000;
+        const se = specificRate(np, u.svt.traits, en, (tab) => maxRow(tab, u.npLv));
         sums[i].push(npDamage({
           atk: u.atk, mult, card: np.card, cardMod: m.cardMod + deb[i].res, classAtk: a.classAtk, triangle: a.triangle,
           attribute: a.attribute, atkMod: m.atkMod, defMod: (en.defUp ?? 0) - deb[i].def, npDmgMod: m.npDmgMod, powerMod: m.powerMod,

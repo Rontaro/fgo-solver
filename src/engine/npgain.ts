@@ -13,11 +13,17 @@ export interface NpGainInput {
   npGainMod: number; // NP gain up, permille
 }
 
+/**
+ * As Chaldea's calculateAttackNpGain (battle_utils.dart): the gain before
+ * overkill is floored first, then the overkill x1.5 is applied and floored
+ * again (flooring once at the end gives up to 1 more per overkill hit).
+ */
 export function npGainPerHit(i: NpGainInput & { overkill: boolean }): number {
-  return Math.floor(
+  const base = Math.floor(
     i.npRate * CARD_GAIN[i.card] * (1 + clamp(i.cardMod / 1000, -1, 4)) * i.tdRate / 1000
-    * (1 + i.npGainMod / 1000) * (i.overkill ? 1.5 : 1),
+    * (1 + i.npGainMod / 1000),
   );
+  return i.overkill ? Math.floor(base * 1.5) : base;
 }
 
 /**

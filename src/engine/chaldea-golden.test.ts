@@ -15,8 +15,10 @@ import yuyuRaw from '../../test/fixtures/jp-yang-guifei.json';
 import okuniRaw from '../../test/fixtures/jp-okuni.json';
 import skadiRaw from '../../test/fixtures/jp-skadi.json';
 import castoriaRaw from '../../test/fixtures/jp-castoria.json';
+import kamaRaw from '../../test/fixtures/jp-kama-avenger.json';
+import sapphireRaw from '../../test/fixtures/jp-sapphire.json';
 import questRaw from '../../test/fixtures/jp-quest-sky-caster.json';
-import { compactServant } from '../data/compact';
+import { compactCE, compactServant } from '../data/compact';
 import { questFromAtlas, type RawQuest } from './quest';
 import { initBattle, useSkill, type BattleState } from './state';
 import { fireNp } from './np';
@@ -88,15 +90,15 @@ describe('Chaldea battle_test.dart golden values (JP, quest 93000406/3)', () => 
     expect(npOnSkyCaster(s)).toBe(52388);
   });
 
-  // Yang Guifei's NP is damageNpStateIndividualFix (damage up vs burned
-  // enemies): not modelled yet, so her NP never fires. Kept for the
-  // "all servants simulable" round (Task 23).
-  it.skip('Yang Guifei NP5 OC1 with Kaleidoscope: 52,575, gauge 9.14% after (2 hits overkill)', () => {
+  // Yang Guifei's NP is damageNpStateIndividualFix (supereffective vs burned
+  // enemies): computed at its base rate, exact here since the sky caster is
+  // not burned yet.
+  it('Yang Guifei NP5 OC1 with Kaleidoscope: 52,575, gauge 9.14% after (2 hits overkill)', () => {
     const s = initBattle([dps(yuyu, 'yuyu')], mcCombat, 10, quest, constants);
     expect(shoot(s, 'yuyu')).toEqual({ dmg: 52575, gauge: 914 });
   });
 
-  it.skip('Yang Guifei with double Altria Caster (S1 S2 S3 each): 146,896, gauge 32.27% after', () => {
+  it('Yang Guifei with double Altria Caster (S1 S2 S3 each): 146,896, gauge 32.27% after', () => {
     let s = initBattle([dps(yuyu, 'yuyu'), support(castoria, 'c1'), support(castoria, 'c2')], mcCombat, 10, quest, constants);
     for (const c of ['c1', 'c2']) for (const n of [1, 2, 3] as const) s = useSkill(s, c, n, 'yuyu');
     expect(shoot(s, 'yuyu')).toEqual({ dmg: 146896, gauge: 3227 });
@@ -114,5 +116,27 @@ describe('Chaldea battle_test.dart golden values (JP, quest 93000406/3)', () => 
     let s = initBattle([dps(okuni, 'okuni'), support(skadi, 's1'), support(skadi, 's2')], mcCombat, 10, quest, constants);
     for (const k of ['s1', 's2']) for (const n of [1, 3] as const) s = useSkill(s, k, n, 'okuni');
     expect(shoot(s, 'okuni')).toEqual({ dmg: 103687, gauge: 2740 });
+  });
+
+  // "Kama 3 turn loop & double Castoria": Kama (Avenger) lv 120, NP5, 2000
+  // fou, appends 10/10/10, Magical Girl of Sapphire lv 100 MLB; Kama S1,
+  // Castoria (1) S2 S3, Castoria (2) S2 S3. Her NP (damageNpStateIndividualFix,
+  // supereffective vs charmed enemies) at its base rate: the caster is not
+  // charmed. Chaldea's NP gauge after it, 124.22%, includes its NP "pity"
+  // rounding (a gauge of 99%+ counts as 100%, applied hit by hit), which we do
+  // not model (it only adds charge): ours may only be lower.
+  it('Kama (Avenger) with double Altria Caster: 82,618 on the sky caster', () => {
+    const kama = compactServant(kamaRaw as any);
+    const sapphire = compactCE(sapphireRaw as any);
+    let s = initBattle([
+      member(kama, 'kama', { lv: 120, npLv: 5, fou: 2000, append2Lv: 10, ce: sapphire, ceLv: 100, ceMlb: true }),
+      member(castoria, 'c1', { lv: 90, npLv: 5, fou: 1000 }),
+      member(castoria, 'c2', { lv: 90, npLv: 5, fou: 1000 }),
+    ], mcCombat, 10, quest, constants);
+    s = useSkill(s, 'kama', 1);
+    for (const c of ['c1', 'c2']) for (const n of [2, 3] as const) s = useSkill(s, c, n, 'kama');
+    const r = shoot(s, 'kama');
+    expect(r.dmg).toBe(82618);
+    expect(r.gauge).toBeLessThanOrEqual(12422);
   });
 });

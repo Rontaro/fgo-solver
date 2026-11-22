@@ -1,4 +1,4 @@
-import type { Effect, LevelVal } from '../data/types';
+import type { Effect, LevelVal, NoblePhantasm } from '../data/types';
 import { npDamage } from './damage';
 import { splitHits, hitsOnEnemy, npRefund } from './npgain';
 import { applyEffect, mods, buffApplies, gaugeCap, livingSlots, refillField, chooseTarget, npTarget, debuffSum, consumeDebuffs, type BattleState, type Buff, type EffectDraft, type Enemy } from './state';
@@ -6,6 +6,23 @@ import { applyEffect, mods, buffApplies, gaugeCap, livingSlots, refillField, cho
 export interface NpResult { state: BattleState; killedAll: boolean; minMargin: number; }
 
 const extraVal = (e: Effect, ocLv: number, npLv: number): LevelVal => (e.oc ? e.oc[ocLv - 1] : e.lv)[npLv - 1];
+
+/**
+ * Specific attack rate of the NP against one enemy (permille, 1000 = none):
+ * supereffective vs a trait (seMult), or damageNpIndividualSum (see
+ * NoblePhantasm.sum). pick reads a [ocLv-1][npLv-1] table (the engine: the
+ * fired OC; the bound: the best OC).
+ */
+export function specificRate(np: NoblePhantasm, selfTraits: readonly number[], enemy: Pick<Enemy, 'traits'>, pick: (t: number[][]) => number): number {
+  if (np.seTraits && np.seMult && np.seTraits.some((tr) => enemy.traits.includes(tr))) return pick(np.seMult);
+  if (np.sum) {
+    const own = np.sum.onEnemy ? enemy.traits : selfTraits;
+    let n = np.sum.traits.filter((t) => own.includes(t)).length;
+    if (np.sum.max > 0) n = Math.min(n, np.sum.max);
+    if (n > 0) return pick(np.sum.base) + n * pick(np.sum.step);
+  }
+  return 1000;
+}
 
 /**
  * NP extras: self, ptAll (alive front line) and ptOther apply; ptOne is
@@ -86,8 +103,7 @@ export function fireNp(state: BattleState, unitKey: string, targetIndex?: number
     const m = { ...m0, cardMod: m0.cardMod + debuffSum(t, 'cardResDown', np.card) };
     const defMod = (t.defUp ?? 0) - debuffSum(t, 'defDown', np.card);
     for (const b of u.buffs) if (b.count > 0 && buffApplies(b, t, np.card)) used.add(b);
-    const se = np.seTraits && np.seMult && np.seTraits.some((tr) => t.traits.includes(tr))
-      ? np.seMult[ocLv - 1][npLv - 1] : 1000;
+    const se = specificRate(np, u.svt.traits, t, (tab) => tab[ocLv - 1][npLv - 1]);
     const damage = npDamage({
       atk: u.atk, mult, card: np.card, cardMod: m.cardMod,
       classAtk: a.classAtk, triangle: a.triangle, attribute: a.attribute,
