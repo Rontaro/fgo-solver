@@ -39,4 +39,17 @@ describe('demerits', () => {
     const dmg = (s: BattleState) => s.enemies[0].hp - fireNp(s, 'a').state.enemies[0].hp;
     expect(dmg(down)).toBeLessThan(dmg(base));
   });
+  it('a self HP loss is counted against the HP: a move the servant would die of is refused', () => {
+    const svt: CompactServant = {
+      ...altria, hp: Array(120).fill(1500),
+      np: { ...altria.np!, extra: [...altria.np!.extra, { kind: 'lossHp', target: 'self', lv: lv(1000, -1) }] },
+    };
+    let s = start(svt);
+    expect(unit(s).hp).toBe(1500);
+    s = fireNp(s, 'a').state;
+    expect(unit(s).hp).toBe(500);
+    const fresh = start(svt); // the same wave again, at full HP
+    s = { ...s, enemies: fresh.enemies, field: fresh.field, reserve: fresh.reserve, npsFired: 0, front: s.front.map((u) => (u ? { ...u, gauge: 10000 } : u)) };
+    expect(() => fireNp(s, 'a')).toThrow(/would die/);
+  });
 });

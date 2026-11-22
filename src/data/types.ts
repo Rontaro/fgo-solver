@@ -20,6 +20,9 @@ export type EffectKind =
   // down is an atkUp with a negative value. Modelled as certain whatever their
   // Rate (pessimistic).
   | 'sealNp' | 'sealSkill' | 'stun'
+  // Self HP loss (Atlas lossHp, an NP / skill demerit): the unit must not die
+  // of it (CompactServant.hp, no HP fou counted).
+  | 'lossHp'
   // Debuffs on enemies (target enemy / enemyAll), see Enemy.debuffs in the
   // engine: DEF down (Atlas downDefence) and card resistance down
   // (downDefencecommandall, Effect.cards = the attacking cards it applies to).
@@ -146,6 +149,8 @@ export interface CompactServant {
    * engine drops every buff such a unit casts (CompactServant traits, any-of).
    */
   castBlockTraits?: number[];
+  /** HP by level (Atlas hpGrowth), only for servants with a lossHp effect. */
+  hp?: number[];
 }
 
 /**

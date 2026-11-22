@@ -32,6 +32,8 @@ export interface Unit {
   readonly pending: readonly Pending[];
   /** The buffs it casts fail (CompactServant.castBlockTraits of a party member). */
   readonly castBlocked?: true;
+  /** HP left, tracked only for servants with lossHp effects (CompactServant.hp, no HP fou). */
+  readonly hp?: number;
   /**
    * Auras (Buff.src) whose holder is in the back line: inactive, moved back to
    * `buffs` when the holder enters the field (syncAuras). They are permanent,
@@ -270,7 +272,7 @@ export const canSkill = (u: Unit): boolean => !u.buffs.some((b) => b.kind === 's
  * stun, a negative value. The solver never assumes such a move only helps.
  */
 export const isHarmful = (e: Effect): boolean =>
-  (e.kind === 'lossNp' && !e.deferred) || CONTROL.has(e.kind) || e.lv.some((v) => v.value < 0);
+  (e.kind === 'lossNp' && !e.deferred) || e.kind === 'lossHp' || CONTROL.has(e.kind) || e.lv.some((v) => v.value < 0);
 const MOD_FIELD: Record<Exclude<BuffKind, 'buffRate' | 'sealNp' | 'sealSkill' | 'stun'>, keyof Mods> = {
   atkUp: 'atkMod', cardUp: 'cardMod', npDmgUp: 'npDmgMod', powerUp: 'powerMod',
   npGainUp: 'npGainMod', ocUp: 'ocUp', dmgPlus: 'dmgPlus',
@@ -331,6 +333,11 @@ function effectOn(u: Unit, e: Effect, v: LevelVal): Unit {
   }
   if (e.kind === 'gainNp') return { ...u, gauge: Math.min(gaugeCap(u.npLv), u.gauge + v.value) };
   if (e.kind === 'lossNp') return { ...u, gauge: Math.max(0, u.gauge - v.value) };
+  if (e.kind === 'lossHp') {
+    // The unit would die (or its HP is unknown): the move is not allowed.
+    if (u.hp === undefined || u.hp - v.value <= 0) throw new Error(`${u.key} would die of its HP loss`);
+    return { ...u, hp: u.hp - v.value };
+  }
   if (e.kind === 'shortenSkill') return { ...u, cd: sub3(u.cd, v.value) };
   if (isBuffKind(e.kind)) return { ...u, buffs: [...u.buffs, toBuff(e, e.kind, v)] };
   return u;
@@ -455,6 +462,7 @@ export function initBattle(members: readonly TeamMember[], mc: CompactMC, mcLv: 
       key: m.key, svt, lv: m.lv, npLv: m.npLv, skillLv: [...m.skillLv],
       atk: m.svt.atkGrowth[m.lv - 1] + m.fou + (m.ce ? m.ce.atkGrowth[m.ceLv - 1] : 0),
       gauge: Math.min(gaugeCap(m.npLv), gauge), cd: [0, 0, 0], buffs, pending: NO_PENDING,
+      ...(m.svt.hp && { hp: m.svt.hp[m.lv - 1] }),
       ...(castBlocked && { castBlocked: true as const }),
     };
   });

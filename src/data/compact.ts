@@ -136,9 +136,11 @@ const IGNORED_FUNCS_ENEMY = new Set([
   // Drains the enemy charge bar (lossNp on an enemy is charge, not our gauge).
   'lossNp', 'displayBuffstring',
 ]);
-// subState on an ally is safe only when it removes debuffs and nothing else:
-// buffNegativeEffect, or the debuff-only DoT families poison/burn/curse.
-const DEBUFF_TRAITS = new Set([3005, 3011, 3015, 3026]);
+// subState on an ally is safe only when it removes nothing we model:
+// debuffs (buffNegativeEffect, the DoT families poison / burn / curse, mental
+// effects such as charm), defence ups (buffIncreaseDefence: not modelled on
+// our side), and Lady Avalon's own NP charge block (a demerit).
+const DEBUFF_TRAITS = new Set([3005, 3011, 3015, 3026, 3010, 3007, 2836]);
 
 // Conditions we understand. Anything else on a modelled effect: dropped if the
 // effect is helpful (we only lose a bonus), unsupported otherwise.
@@ -501,12 +503,19 @@ export function convertFunctions(funcs: any[], unsupported: string[], opts: Conv
     const lvOk = setOk[0];
     prevOk = SIDE[f.funcTargetType] === 'ally' && isPlain && lvOk.length > 0 && setOk.every((s) => s.every(Boolean));
 
-    // Self HP loss (NP / skill demerit). HP is not modelled: ignored when even
-    // five uses (more NPs than a battle has turns) cannot kill the servant at
-    // level 1 with no fou; else unsupported (it could die).
+    // Self HP loss (NP / skill demerit): ignored when even five uses (more NPs
+    // than a battle has turns) cannot kill the servant at level 1 with no fou;
+    // else an EffectKind lossHp the engine counts against CompactServant.hp.
+    // Certain whatever its Rate (pessimistic).
     if (f.funcType === 'lossHp' && f.funcTargetType === 'self' && f.funcTargetTeam !== 'enemy' && opts.hpMin
-      && sets.flat().every((v: any) => (v.Value ?? 0) * 5 < opts.hpMin!) && Object.keys(f.svals?.[0] ?? {}).every((k) => ['Rate', 'Value', 'EvenIfWinDie'].includes(k))) {
+      && Object.keys(f.svals?.[0] ?? {}).every((k) => ['Rate', 'Value', 'EvenIfWinDie'].includes(k))) {
       prevOk = false;
+      if (sets.flat().every((v: any) => (v.Value ?? 0) * 5 < opts.hpMin!)) continue;
+      const lvHp = (set: any[]) => set.map((v) => ({ value: Math.abs(v.Value ?? 0), turns: -1, count: -1 }));
+      const e: Effect = { kind: 'lossHp', target: 'self', lv: lvHp(svals) };
+      if (opts.npExtras && sets.length === 5 && sets.some((s) => JSON.stringify(s) !== JSON.stringify(svals))) e.oc = sets.map(lvHp);
+      if (opts.npDamage && !afterDamage) e.pre = true;
+      out.push(e);
       continue;
     }
     const ctx: Ctx = { triggers: opts.triggers, depth: 0, flip: false, allowLoss: opts.allowLoss };
@@ -768,19 +777,23 @@ export function compactServant(svt: any, triggers?: TriggerLookup, report?: Part
     return !tv;
   }), unsupported, { ...base, drops: passiveDrops }));
   if (passiveDrops.length) report?.push({ part: 'passive', drops: uniq(passiveDrops) });
+  const skills = skillsOf(svt.skills, base, report);
+  const np = npOf(svt, unsupported, base, report);
+  const losesHp = [...skills.flatMap((k) => k.effects), ...(np?.extra ?? [])].some((e) => e.kind === 'lossHp');
   return {
     id: svt.id, collectionNo: svt.collectionNo, name: svt.name,
     face: faceOf(svt.extraAssets?.faces?.ascension),
     className: svt.className, attribute: svt.attribute, traits: svt.traits.map((t: any) => t.id),
     rarity: svt.rarity ?? 0,
     atkGrowth: svt.atkGrowth,
-    skills: skillsOf(svt.skills, base, report),
+    skills,
     passives,
     ...(eventPassives.length && { eventPassives }),
     append2: append2 ? append2.functions[0].svals.map((v: any) => v.Value) : [],
-    np: npOf(svt, unsupported, base, report),
+    np,
     unsupported: uniq(unsupported),
     ...(castBlock.size && { castBlockTraits: [...castBlock] }),
+    ...(losesHp && Array.isArray(svt.hpGrowth) && { hp: svt.hpGrowth }),
   };
 }
 

@@ -212,7 +212,9 @@ describe('convertFunctions', () => {
   });
   it('subState removing only debuff families (poison/burn/curse) is ignored', () => {
     ignored(func('subState', 'ptAll', {}, { traitVals: [{ id: 3011 }, { id: 3026 }, { id: 3015 }] }));
-    expect(run([func('subState', 'self', {}, { traitVals: [{ id: 3007 }] })]).unsupported).toEqual(['func:subState']);
+    // Defence ups (not modelled on our side) and mental debuffs: nothing we model is removed.
+    ignored(func('subState', 'self', {}, { traitVals: [{ id: 3007 }] }));
+    expect(run([func('subState', 'self', {}, { traitVals: [{ id: 3004 }] })]).unsupported).toEqual(['func:subState']);
   });
   it('ptOtherFull maps to ptOther (backline buff dropped: conservative)', () => {
     expect(run([buff('upAtk', 'ptOtherFull')]).out[0].target).toBe('ptOther');

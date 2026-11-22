@@ -403,6 +403,10 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
     if (h === undefined) {
       h = `${buildOf.get(u.key)}:${capCd(u.cd[0], wave)},${capCd(u.cd[1], wave)},${capCd(u.cd[2], wave)}`;
       if (u.svt.np) h += `:${u.gauge}:${buffsHash(u, wave)}`;
+      // Seals / stuns and HP matter on any unit (they block its skills / NP).
+      const ctl = u.buffs.filter((b) => b.kind === 'sealNp' || b.kind === 'sealSkill' || b.kind === 'stun');
+      if (ctl.length) h += `:c${ctl.map((b) => `${b.kind}${b.turns}`).sort().join('.')}`;
+      if (u.hp !== undefined) h += `:h${u.hp}`;
       if (u.pending.length) h += `:${pendingHash(u, wave)}`;
       unitHashes[wave].set(u, h);
     }
@@ -772,7 +776,8 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
       for (const ti of targetChoices(s, start, u.svt.np.aoe)) {
         if (tick()) return;
         stats.npFires++;
-        const r = fireNp(ti === undefined ? s : { ...s, target: start.field[ti] }, u.key);
+        let r: ReturnType<typeof fireNp>;
+        try { r = fireNp(ti === undefined ? s : { ...s, target: start.field[ti] }, u.key); } catch { continue; } // e.g. it would die of its HP loss
         const step: Step = { kind: 'np', unit: u.key };
         const firstStep = depth > 0 ? cur()[first] : undefined;
         if (ti !== undefined) {
@@ -1009,7 +1014,8 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
     for (let slot = 0; slot < s.front.length; slot++) {
       const u = s.front[slot];
       if (!u || !u.svt.np || used & (1 << slot) || u.gauge < 10000 || !canNp(u)) continue;
-      const r = fireNp(s, u.key);
+      let r: ReturnType<typeof fireNp>;
+      try { r = fireNp(s, u.key); } catch { continue; }
       const step: Step = { kind: 'np', unit: u.key };
       if (r.killedAll) return [step];
       const rest = npsFrom(r.state, used | (1 << slot), depth + 1);
