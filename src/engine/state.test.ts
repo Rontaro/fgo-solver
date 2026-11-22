@@ -193,6 +193,44 @@ describe('useSkill', () => {
   });
 });
 
+describe('quest-conditioned effects (field traits, event)', () => {
+  const F = 94000160, EV = 80494;
+  const cond: Effect[] = [
+    { kind: 'atkUp', target: 'self', lv: fill(100, 3), fieldTraits: [1, F] },
+    { kind: 'gainNp', target: 'self', lv: fill(2000), eventId: EV },
+  ];
+  const svt: CompactServant = {
+    ...shortener, id: 2, name: 'Cond',
+    skills: [{ num: 1, cooldown: Array(10).fill(5), effects: cond }],
+    passives: [{ kind: 'powerUp', target: 'self', lv: [lv(50)], fieldTraits: [F] }],
+    eventPassives: [
+      { eventIds: [EV], effects: [{ kind: 'gainNp', target: 'self', lv: [lv(3000)] }, { kind: 'npDmgUp', target: 'self', lv: [lv(70)], fieldTraits: [F] }] },
+      { eventIds: [1], effects: [{ kind: 'gainNp', target: 'self', lv: [lv(5000)] }] },
+    ],
+  };
+  const ce = { ...kaleidoscope, effects: [{ kind: 'powerUp' as const, target: 'self' as const, lv: [lv(2000)], fieldTraits: [F] }] };
+  const run = (q: { fieldTraits?: number[]; eventId?: number }) => {
+    const s = initBattle([member(svt, 'c', { npLv: 5, ce, ceLv: 1 })], mcCombat, 10, { ...prisonRuins, ...q }, constants);
+    return { start: unit(s, 'c'), after: unit(useSkill(s, 'c', 1), 'c') };
+  };
+  it('apply only when a field trait matches (any-of) / its event is the quest event', () => {
+    const on = run({ fieldTraits: [7, F], eventId: EV });
+    expect(on.start.gauge).toBe(3000);
+    expect(on.start.buffs.map((b) => [b.kind, b.value])).toEqual([['powerUp', 50], ['npDmgUp', 70], ['powerUp', 2000]]);
+    expect(on.after.gauge).toBe(5000);
+    expect(on.after.buffs.map((b) => b.kind)).toContain('atkUp');
+    const off = run({});
+    expect(off.start.gauge).toBe(0);
+    expect(off.start.buffs).toEqual([]);
+    expect(off.after.gauge).toBe(0);
+    expect(off.after.buffs).toEqual([]);
+    // Field without event: the event passive (and the EventId skill effect) stay off.
+    const field = run({ fieldTraits: [F] });
+    expect(field.start.buffs.map((b) => b.value)).toEqual([50, 2000]);
+    expect(field.after.gauge).toBe(0);
+  });
+});
+
 describe('useMc', () => {
   it('Combat Uniform S1: atkUp 300 for 1 turn to the front line, MC cooldown set', () => {
     const s = useMc(team(), 0, mcCombat, 10);

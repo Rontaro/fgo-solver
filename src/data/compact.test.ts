@@ -11,6 +11,8 @@ import koyanskaya from '../../test/fixtures/koyanskaya-light.json';
 import superOrion from '../../test/fixtures/super-orion.json';
 import skill966533 from '../../test/fixtures/skill-966533.json';
 import skill964095 from '../../test/fixtures/skill-964095.json';
+import oni from '../../test/fixtures/pioneering-oni.json';
+import eresh from '../../test/fixtures/ereshkigal.json';
 import { compactServant, compactCE, compactMC, convertFunctions, faceOf } from './compact';
 
 describe('compactServant', () => {
@@ -257,7 +259,6 @@ describe('convertFunctions', () => {
   });
   it('extra conditions on a helpful modelled effect: dropped', () => {
     expect(run([buff('upAtk', 'self', {}, { functvals: [{ id: 1 }] })])).toEqual(DROPPED);
-    expect(run([buff('upAtk', 'self', { EventId: 80001 })])).toEqual(DROPPED);
     const scripted = buff('upAtk');
     scripted.buffs[0].script = { INDIVIDUALITIE: 1 } as any;
     expect(run([scripted])).toEqual(DROPPED);
@@ -266,6 +267,23 @@ describe('convertFunctions', () => {
     expect(run([ok]).unsupported).toEqual([]);
     // Conditions on an ignored effect do not matter.
     expect(run([buff('invincible', 'self', { EventId: 1 })]).unsupported).toEqual([]);
+  });
+  it('quest conditions: field traits (any-of) and EventId kept on the effect', () => {
+    const fq = (ids: number[], sv = {}) => buff('upDamage', 'self', sv, { funcquestTvals: ids.map((id) => ({ id })) });
+    expect(run([fq([94000160, 94000161])]).out[0]).toMatchObject({ kind: 'powerUp', fieldTraits: [94000160, 94000161] });
+    expect(run([fq([94000160])]).out[0].eventId).toBeUndefined();
+    expect(run([buff('upAtk', 'self', { EventId: 80001 })]).out[0]).toMatchObject({ kind: 'atkUp', eventId: 80001 });
+    expect(run([fq([94000160], { EventId: 80001 })]).out[0]).toMatchObject({ fieldTraits: [94000160], eventId: 80001 });
+    expect(run([buff('upAtk', 'self', { EventId: 0 })]).out[0]).not.toHaveProperty('eventId');
+    // A negative (none-of) trait could be wrongly met (field traits added at runtime are ignored): dropped.
+    expect(run([fq([-94000160])])).toEqual(DROPPED);
+    expect(run([fq([94000160, -5])])).toEqual(DROPPED);
+    // Other conditions alongside still drop it.
+    expect(run([buff('upAtk', 'self', {}, { funcquestTvals: [{ id: 1 }], functvals: [{ id: 2 }] })])).toEqual(DROPPED);
+    // A quest-conditioned function is not unconditional: its follow-up is a failed chance.
+    expect(run([fq([1]), func('gainNp', 'self', { Rate: -1000, Value: 500 })]).out.map((e) => e.kind)).toEqual(['powerUp']);
+    // Non-helpful kinds stay unsupported under a quest condition.
+    expect(run([func('replaceMember', 'ptselectOneSub', {}, { funcquestTvals: [{ id: 1 }] })]).unsupported).toEqual(['cond:replaceMember']);
   });
   it('NP extras: pre flag, OC-dependent extras, stray damage functions', () => {
     const dmg = func('damageNp', 'enemyAll');
@@ -366,6 +384,43 @@ describe('popular farming servants (real fixtures)', () => {
   });
 });
 
+describe('compactServant event passives', () => {
+  const ep = (eventId: number, priority: number, functions: any[], cond: any = {}) => ({
+    id: eventId * 10 + priority, name: 'ep', functions,
+    extraPassive: [{ eventId, priority, condFriendshipRank: 0, condLimitCount: 0, condLv: 0, condQuestId: 0, releaseConditions: [], ...cond }],
+  });
+  const dmg = (Value: number) => ({
+    funcType: 'addStateShort', funcTargetType: 'self', funcTargetTeam: 'playerAndEnemy', functvals: [],
+    funcquestTvals: [{ id: 94000999 }], buffs: [{ type: 'upDamage', ckSelfIndv: [], ckOpIndv: [], script: {} }],
+    svals: [{ Rate: 1000, Turn: -1, Count: -1, Value }],
+  });
+  const friend = { funcType: 'servantFriendshipUp', funcTargetType: 'self', funcTargetTeam: 'playerAndEnemy', functvals: [], buffs: [], svals: [{ EventId: 1 }] };
+  const with_ = (extraPassive: any[]) => compactServant({ ...(altria as any), extraPassive });
+  it('one per event (highest priority), with its field-conditioned effects', () => {
+    const s = with_([ep(80001, 1, [dmg(300)]), ep(80001, 2, [dmg(500), friend]), ep(80002, 1, [dmg(100)])]);
+    expect(s.eventPassives).toEqual([
+      { eventIds: [80001], effects: [{ kind: 'powerUp', target: 'self', lv: [{ value: 500, turns: -1, count: -1 }], fieldTraits: [94000999] }] },
+      { eventIds: [80002], effects: [expect.objectContaining({ kind: 'powerUp' })] },
+    ]);
+    expect(s.unsupported).toEqual([]);
+  });
+  it('an event with a release condition (bond, ascension, quest) is dropped whole; no event = ignored', () => {
+    expect(with_([ep(80001, 1, [dmg(300)]), ep(80001, 2, [dmg(500)], { condFriendshipRank: 5 })]).eventPassives).toBeUndefined();
+    expect(with_([ep(80001, 1, [dmg(300)], { condQuestId: 1 })]).eventPassives).toBeUndefined();
+    expect(with_([ep(0, 1, [dmg(300)])]).eventPassives).toBeUndefined();
+    expect(with_([ep(80001, 1, [friend])]).eventPassives).toBeUndefined();
+  });
+  it('Ereshkigal: event bonuses without release conditions only', () => {
+    const s = compactServant(eresh as any);
+    const ids = s.eventPassives!.flatMap((p) => p.eventIds);
+    expect(ids).toEqual([80364, 80424, 80476]);
+    // Not 80038 (Power of Bonds: bond rank) nor 80414 (gainNp 300%, needs a shop purchase: releaseConditions).
+    expect(s.eventPassives!.find((p) => p.eventIds.includes(80424))!.effects).toEqual([
+      { kind: 'powerUp', target: 'self', lv: [{ value: 300, turns: -1, count: -1 }], fieldTraits: [94000142] },
+    ]);
+  });
+});
+
 describe('compactCE', () => {
   it('falls back to non-MLB effects when the CE has no MLB skill', () => {
     const ce = compactCE({
@@ -377,6 +432,33 @@ describe('compactCE', () => {
     });
     expect(ce.effectsMlb).toEqual(ce.effects);
     expect(ce.effects[0].lv[0].value).toBe(3000);
+  });
+  const fn = (Value: number, fq: number[] = []) => ({
+    funcType: 'addStateShort', funcTargetType: 'self', funcTargetTeam: 'playerAndEnemy', functvals: [],
+    funcquestTvals: fq.map((id) => ({ id })), buffs: [{ type: 'upDamage', ckSelfIndv: [], ckOpIndv: [], script: {} }],
+    svals: [{ Rate: 1000, Turn: -1, Count: -1, Value }],
+  });
+  const sk = (num: number, condLimitCount: number, ...functions: any[]) => ({ num, condLimitCount, priority: 1, functions });
+  const vals = (es: { lv: { value: number }[] }[]) => es.map((e) => e.lv[0].value);
+  it('Pioneering Oni: the event ATK bonus is kept with its field trait (200% MLB)', () => {
+    const ce = compactCE(oni as any);
+    expect(ce.unsupported).toEqual([]);
+    expect(ce.effectsMlb.find((e) => e.kind === 'powerUp')).toEqual({
+      kind: 'powerUp', target: 'self', lv: [{ value: 2000, turns: -1, count: -1 }], fieldTraits: [94000160],
+    });
+    expect(ce.effects.find((e) => e.kind === 'powerUp')!.lv[0].value).toBe(1000);
+    expect(ce.effectsMlb.find((e) => e.kind === 'gainNp')!.lv[0].value).toBe(5000);
+  });
+  it('MLB variants are chosen per skill num (a num without one keeps its base skill)', () => {
+    const ce = compactCE({ id: 1, collectionNo: 1, name: 'x', atkGrowth: [], skills: [sk(1, 0, fn(100)), sk(1, 4, fn(200)), sk(2, 0, fn(50))] });
+    expect(vals(ce.effects)).toEqual([100, 50]);
+    expect(vals(ce.effectsMlb)).toEqual([200, 50]);
+  });
+  it('several skills of one num: reruns on other fields kept, same-field levels dropped', () => {
+    const rerun = compactCE({ id: 1, collectionNo: 1, name: 'x', atkGrowth: [], skills: [sk(2, 0, fn(100, [1])), sk(2, 0, fn(200, [2]))] });
+    expect(rerun.effects.map((e) => e.fieldTraits)).toEqual([[1], [2]]);
+    const levels = compactCE({ id: 1, collectionNo: 1, name: 'x', atkGrowth: [], skills: [sk(2, 0, fn(100, [1])), sk(2, 0, fn(200, [1])), sk(3, 0, fn(5))] });
+    expect(vals(levels.effects)).toEqual([5]);
   });
   it('Kaleidoscope: gainNp self 80% non-MLB, 100% MLB', () => {
     const ce = compactCE(kscope as any);

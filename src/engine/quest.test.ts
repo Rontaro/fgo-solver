@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { questFromAtlas, UnsupportedQuestError, type RawEnemy, type RawQuest, type RawStage } from './quest';
+import { questFromAtlas, fieldTraitsOf, UnsupportedQuestError, type RawEnemy, type RawQuest, type RawStage } from './quest';
 import { prisonRuins, prisonRuinsRaw } from './test-helpers';
 
 const base = prisonRuinsRaw.stages[0].enemies[0];
@@ -31,6 +31,18 @@ describe('questFromAtlas', () => {
     expect(base.classPassive?.addPassive?.[0].name).toBe('Mental Debuff Immune');
     expect(base.classPassive?.addPassive?.[0].functions[0].buffs?.[0].type).toBe('avoidState');
     expect(reasons(prisonRuinsRaw)).toEqual([]);
+  });
+  it('field traits as Chaldea questIndividuality, and the caller-set event id', () => {
+    const t = (...ids: number[]) => ids.map((id) => ({ id }));
+    expect(fieldTraitsOf({ stages: [], individuality: t(1, 2) })).toEqual([1, 2]);
+    // phaseIndividuality: battleBg traits + its positive ids, minus its negative ones.
+    expect(fieldTraitsOf({ stages: [], individuality: t(9), battleBg: { individuality: t(3, 4) }, phaseIndividuality: t(5, -4) }))
+      .toEqual([3, 5]);
+    expect(fieldTraitsOf({ stages: [], individuality: t(9), phaseIndividuality: null })).toEqual([9]);
+    const q = questFromAtlas({ ...quest({}), individuality: t(94000160), eventId: 80494 });
+    expect(q).toMatchObject({ fieldTraits: [94000160], eventId: 80494 });
+    expect(questFromAtlas(quest({}))).not.toHaveProperty('fieldTraits');
+    expect(questFromAtlas(quest({}))).not.toHaveProperty('eventId');
   });
   it('sorts by deckId', () => {
     const q = questFromAtlas(quest({ enemies: [mk({ deckId: 2, hp: 2 }), mk({ deckId: 1, hp: 1 })] }));

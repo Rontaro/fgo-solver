@@ -23,7 +23,15 @@ export interface Effect {
   // (from svals..svals5). `lv` always equals oc[0] (OC1), so code that ignores
   // OC stays conservative for helpful effects.
   oc?: LevelVal[][];
+  // Quest conditions (Atlas funcquestTvals / svals EventId). The effect only
+  // runs when the quest has at least one of these field traits (any-of, as in
+  // Chaldea's checkSignedIndivPartialMatch) / belongs to this event's war.
+  fieldTraits?: number[];
+  eventId?: number;
 }
+
+/** Event bonus passive (Atlas extraPassive): active only in quests of these events. */
+export interface EventPassive { eventIds: number[]; effects: Effect[]; }
 
 export interface Skill { num: 1 | 2 | 3; cooldown: number[]; effects: Effect[]; }
 
@@ -46,6 +54,7 @@ export interface CompactServant {
   atkGrowth: number[];
   skills: Skill[];
   passives: Effect[];
+  eventPassives?: EventPassive[]; // omitted when empty
   append2: number[];       // starting NP charge per append level, in 0.01%
   np: NoblePhantasm | null;
   unsupported: string[];   // unhandled effect types; empty = simulable

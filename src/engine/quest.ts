@@ -24,7 +24,17 @@ export interface RawStage {
   originalScript?: { enemyEntryOrder?: readonly number[]; enemyAutoTargetOrder?: readonly number[] } | null;
   enemies: readonly RawEnemy[];
 }
-export interface RawQuest { flags?: readonly string[]; stages: readonly RawStage[]; }
+type Traits = readonly { id: number }[];
+export interface RawQuest {
+  flags?: readonly string[]; stages: readonly RawStage[];
+  /** Field traits: individuality, or battleBg + phaseIndividuality (see fieldTraitsOf). */
+  individuality?: Traits; phaseIndividuality?: Traits | null; battleBg?: { individuality?: Traits } | null;
+  /**
+   * The quest war's event (QuestWar.eventId). Atlas quest phases only carry
+   * warId: the caller sets it from the war index. 0 / absent = no event.
+   */
+  eventId?: number;
+}
 
 export class UnsupportedQuestError extends Error {
   readonly reasons: readonly string[];
@@ -168,6 +178,20 @@ function layout(st: RawStage, first: boolean, immediate: boolean, enemies: reado
 }
 
 /**
+ * Field traits as Chaldea's QuestPhase.questIndividuality: with
+ * phaseIndividuality, the battle background's traits plus its positive ids
+ * minus its negative ones; otherwise the quest's individuality.
+ */
+export function fieldTraitsOf(raw: RawQuest): number[] {
+  if (raw.phaseIndividuality) {
+    const ph = raw.phaseIndividuality.map((t) => t.id);
+    const drop = new Set(ph.filter((t) => t < 0).map((t) => -t));
+    return [...(raw.battleBg?.individuality ?? []).map((t) => t.id), ...ph.filter((t) => t >= 0)].filter((t) => !drop.has(Math.abs(t)));
+  }
+  return (raw.individuality ?? []).map((t) => t.id);
+}
+
+/**
  * Atlas quest phase -> engine quest. Throws UnsupportedQuestError (with every
  * reason) for reinforcements that only enter next turn, shift/call/change
  * decks and enemy passives that could reduce our damage or keep an enemy alive.
@@ -206,5 +230,9 @@ export function questFromAtlas(raw: RawQuest): Quest {
     });
   });
   if (reasons.length) throw new UnsupportedQuestError([...new Set(reasons)]);
-  return layouts.some((l) => l) ? { waves, layouts } : { waves };
+  const fieldTraits = fieldTraitsOf(raw);
+  return {
+    waves, ...(layouts.some((l) => l) && { layouts }),
+    ...(fieldTraits.length && { fieldTraits }), ...(raw.eventId && { eventId: raw.eventId }),
+  };
 }

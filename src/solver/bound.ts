@@ -1,5 +1,5 @@
 import type { CompactMC, Constants, Effect, NoblePhantasm } from '../data/types';
-import { affinity, layoutOf, type BattleState, type Buff, type Enemy, type Quest, type Unit } from '../engine/state';
+import { affinity, effectActive, layoutOf, type BattleState, type Buff, type Enemy, type Quest, type Unit } from '../engine/state';
 import { npDamage } from '../engine/damage';
 
 /*
@@ -102,13 +102,13 @@ export function damageBound(s: BattleState, c: BoundCtx): BoundFail | null {
           if (n === 0) return;
           for (const e of sk.effects) {
             const v = e.lv[lv]?.value ?? 0;
-            if (v > 0 && reaches(e.target, cu.key, u)) put(e, v * n);
+            if (v > 0 && reaches(e.target, cu.key, u) && effectActive(e, s.cond)) put(e, v * n);
           }
         });
         const cnp = cu.svt.np;
         if (cnp) {
           for (const e of cnp.extra) {
-            if (!reaches(e.target, cu.key, u) || e.target === 'ptOne') continue;
+            if (!reaches(e.target, cu.key, u) || e.target === 'ptOne' || !effectActive(e, s.cond)) continue;
             const v = Math.max(...(e.oc ?? [e.lv]).map((row) => row[cu.npLv - 1]?.value ?? 0));
             if (v > 0) put(e, v * (W - T + 1));
           }
@@ -120,7 +120,7 @@ export function damageBound(s: BattleState, c: BoundCtx): BoundFail | null {
         if (n === 0) continue;
         for (const e of sk.effects) {
           const v = e.lv[c.mcLv - 1]?.value ?? 0;
-          if (v > 0 && reaches(e.target, null, u)) put(e, v * n);
+          if (v > 0 && reaches(e.target, null, u) && effectActive(e, s.cond)) put(e, v * n);
         }
       }
       const mult = maxRow(np.mult, u.npLv);

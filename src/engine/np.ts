@@ -1,7 +1,7 @@
 import type { Effect, LevelVal } from '../data/types';
 import { npDamage } from './damage';
 import { splitHits, hitsOnEnemy, npRefund } from './npgain';
-import { applyEffect, mods, buffApplies, gaugeCap, livingSlots, refillField, chooseTarget, npTarget, type BattleState, type Buff, type Enemy, type Unit } from './state';
+import { applyEffect, mods, buffApplies, gaugeCap, livingSlots, refillField, chooseTarget, npTarget, type BattleState, type Buff, type Enemy, type QuestCond, type Unit } from './state';
 
 export interface NpResult { state: BattleState; killedAll: boolean; minMargin: number; }
 
@@ -12,10 +12,10 @@ const extraVal = (e: Effect, ocLv: number, npLv: number): LevelVal => (e.oc ? e.
  * skipped (an NP picks no ally target; skipping only loses help); enemy-side
  * targets are not modelled.
  */
-function applyExtras(front: (Unit | null)[], extras: readonly Effect[], pre: boolean, ocLv: number, npLv: number, key: string) {
+function applyExtras(front: (Unit | null)[], cond: QuestCond, extras: readonly Effect[], pre: boolean, ocLv: number, npLv: number, key: string) {
   for (const e of extras) {
     if (!!e.pre !== pre || e.target === 'ptOne') continue;
-    applyEffect({ front }, e, extraVal(e, ocLv, npLv), key);
+    applyEffect({ front, cond }, e, extraVal(e, ocLv, npLv), key);
   }
 }
 
@@ -60,7 +60,7 @@ export function fireNp(state: BattleState, unitKey: string, targetIndex?: number
   const npLv = u0.npLv;
   front[ui] = { ...u0, gauge: 0 };
 
-  applyExtras(front, np.extra, true, ocLv, npLv, unitKey);
+  applyExtras(front, state.cond, np.extra, true, ocLv, npLv, unitKey);
 
   const u = front[ui]!;
   const aff = state.aff[unitKey];
@@ -105,7 +105,7 @@ export function fireNp(state: BattleState, unitKey: string, targetIndex?: number
   }
   front[ui] = { ...u, buffs, gauge: Math.min(gaugeCap(u.npLv), u.gauge + refund) };
 
-  applyExtras(front, np.extra, false, ocLv, npLv, unitKey);
+  applyExtras(front, state.cond, np.extra, false, ocLv, npLv, unitKey);
 
   // enemies holds the reserve too (full HP until it enters): every enemy dead
   // means field and reserve are empty.

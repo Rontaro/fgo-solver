@@ -54,7 +54,10 @@ export interface BattleState {
   readonly swapped: boolean;
   /** unit key -> affinity against enemies[i] of the current wave. */
   readonly aff: Readonly<Record<string, readonly Affinity[]>>;
+  /** The quest's field traits and event, for quest-conditioned effects (effectActive). */
+  readonly cond: QuestCond;
 }
+export interface QuestCond { readonly fieldTraits: readonly number[]; readonly eventId: number; }
 export interface TeamMember {
   svt: CompactServant; lv: number; npLv: number; skillLv: [number, number, number]; append2Lv: number;
   fou: number; ce: CompactCE | null; ceLv: number; ceMlb: boolean; key: string;
@@ -80,6 +83,23 @@ export interface WaveLayout {
 export interface Quest {
   readonly waves: readonly (readonly Enemy[])[];
   readonly layouts?: readonly (WaveLayout | undefined)[];
+  /** Field traits (Chaldea's questIndividuality); absent = none. */
+  readonly fieldTraits?: readonly number[];
+  /** Event of the quest's war; absent = none. */
+  readonly eventId?: number;
+}
+
+const NO_TRAITS: readonly number[] = [];
+export const questCond = (q: Quest): QuestCond => ({ fieldTraits: q.fieldTraits ?? NO_TRAITS, eventId: q.eventId ?? 0 });
+
+/**
+ * Whether a quest-conditioned effect runs in this quest: one of its field
+ * traits is on the field (any-of, Chaldea's checkSignedIndivPartialMatch on
+ * funcquestTvals) and its event, if any, is the quest's (svals EventId).
+ */
+export function effectActive(e: Pick<Effect, 'fieldTraits' | 'eventId'>, c: QuestCond): boolean {
+  if (e.fieldTraits && !e.fieldTraits.some((t) => c.fieldTraits.includes(t))) return false;
+  return !e.eventId || e.eventId === c.eventId;
 }
 
 const plainLayouts = new WeakMap<readonly Enemy[], WaveLayout>();
@@ -219,8 +239,8 @@ function effectOn(u: Unit, e: Effect, v: LevelVal): Unit {
  * casterKey null = Mystic Code (no self/ptOther). Enemy-side targets and
  * orderChange are not handled here. A value of 0 means "not guaranteed": no-op.
  */
-export function applyEffect(d: { front: Front }, e: Effect, v: LevelVal, casterKey: string | null, targetKey?: string): void {
-  if (v.value === 0 || e.kind === 'orderChange') return;
+export function applyEffect(d: { front: Front; cond: QuestCond }, e: Effect, v: LevelVal, casterKey: string | null, targetKey?: string): void {
+  if (v.value === 0 || e.kind === 'orderChange' || !effectActive(e, d.cond)) return;
   const f = d.front;
   const on = (i: number) => { f[i] = effectOn(f[i]!, e, v); };
   switch (e.target) {
@@ -255,6 +275,7 @@ export function initBattle(members: readonly TeamMember[], mc: CompactMC, mcLv: 
     if (keys.has(m.key)) throw new Error(`duplicate member key: ${m.key}`);
     keys.add(m.key);
   }
+  const cond = questCond(quest);
   const units = members.map((m): Unit => {
     const what = (f: string) => `${m.key}.${f}`;
     inRange(m.lv, 1, m.svt.atkGrowth.length, what('lv'));
@@ -270,15 +291,18 @@ export function initBattle(members: readonly TeamMember[], mc: CompactMC, mcLv: 
     // party-wide passive/CE effect is skipped (conservative, they only help).
     for (const e of m.svt.passives) {
       const v = e.lv[0];
-      if (v && v.value !== 0 && v.turns === -1 && e.target === 'self' && isBuffKind(e.kind)) buffs.push(toBuff(e, e.kind, v));
+      if (v && v.value !== 0 && v.turns === -1 && e.target === 'self' && isBuffKind(e.kind) && effectActive(e, cond)) buffs.push(toBuff(e, e.kind, v));
     }
-    if (m.ce) {
-      for (const e of m.ceMlb ? m.ce.effectsMlb : m.ce.effects) {
-        const v = e.lv[0];
-        if (!v || v.value === 0 || e.target !== 'self') continue;
-        if (e.kind === 'gainNp') gauge += v.value;
-        else if (isBuffKind(e.kind)) buffs.push(toBuff(e, e.kind, v));
-      }
+    // CE and event bonus passives (Chaldea's activateExtraPassive / activateCE, at battle start).
+    const start = [
+      ...(m.svt.eventPassives ?? []).filter((p) => cond.eventId && p.eventIds.includes(cond.eventId)).flatMap((p) => p.effects),
+      ...(m.ce ? (m.ceMlb ? m.ce.effectsMlb : m.ce.effects) : []),
+    ];
+    for (const e of start) {
+      const v = e.lv[0];
+      if (!v || v.value === 0 || e.target !== 'self' || !effectActive(e, cond)) continue;
+      if (e.kind === 'gainNp') gauge += v.value;
+      else if (isBuffKind(e.kind)) buffs.push(toBuff(e, e.kind, v));
     }
     return {
       key: m.key, svt: m.svt, lv: m.lv, npLv: m.npLv, skillLv: [...m.skillLv],
@@ -292,7 +316,7 @@ export function initBattle(members: readonly TeamMember[], mc: CompactMC, mcLv: 
     turn: 1, wave: 0,
     front: units.slice(0, 3), back: units.slice(3),
     enemies, ...waveState(lay), mcCd: mc.skills.map(() => 0), swapped: false,
-    aff: affTable(constants, units, enemies),
+    aff: affTable(constants, units, enemies), cond,
   };
 }
 

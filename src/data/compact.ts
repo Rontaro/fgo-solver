@@ -1,6 +1,6 @@
 import type {
   Card, Effect, EffectKind, TargetKind, Skill, NoblePhantasm,
-  CompactServant, CompactCE, CompactMC, LevelVal,
+  CompactServant, CompactCE, CompactMC, LevelVal, EventPassive,
 } from './types';
 
 // Raw Atlas Academy input is untyped JSON: `any` on the input side only.
@@ -68,8 +68,9 @@ const IGNORED_BUFFS_ALLY = new Set([
   // of the model.
   'downCriticalRateDamageTaken', 'downStarweight', 'upGrantInstantdeath', 'avoidInstantdeath',
   'downTolerance',
-  // Changes field traits: none of our modelled effects reads the field (field
-  // conditions are dropped as conditional).
+  // Adds a field trait: field conditions are any-of and checked on the quest's
+  // own traits (questCond), so an added trait can only make us miss a bonus.
+  // Removing one (subFieldIndividuality) is not listed: unsupported.
   'fieldIndividuality',
   // Stronger DoT received by the holder (Super Orion's "Corroding Poison"
   // demerit): our servants are never under a DoT in the model (enemies do not
@@ -242,13 +243,16 @@ function classify(f: any, ctx: Ctx = { depth: 0, flip: false }): Class {
 // True when the function carries no condition beyond the ones we model.
 // functvals = traits the target must have. On a self-targeted function, traits
 // the servant always has (its base traits) make the condition always true.
-function plain(f: any, selfTraits?: Set<number>): boolean {
+// quest: also accept the quest conditions (field traits, EventId), which
+// questCond() turns into Effect.fieldTraits / eventId.
+function plain(f: any, selfTraits?: Set<number>, quest = false): boolean {
   const tv: number[] = (f.functvals ?? []).map((t: any) => t.id);
   const tvOk = !tv.length || (f.funcTargetType === 'self' && !!selfTraits && tv.every((id) => selfTraits.has(id)));
-  if (!tvOk || f.funcquestTvals?.length || f.overWriteTvalsList?.length) return false;
+  if (!tvOk || f.overWriteTvalsList?.length) return false;
+  if (f.funcquestTvals?.length && !quest) return false;
   if (f.script && Object.keys(f.script).length) return false;
   for (const k of ['svals', ...OC_SVALS]) {
-    for (const v of f[k] ?? []) if (Object.keys(v).some((key) => !SVAL_KEYS.has(key))) return false;
+    for (const v of f[k] ?? []) if (Object.keys(v).some((key) => !SVAL_KEYS.has(key) && !(quest && key === 'EventId'))) return false;
   }
   const b = f.buffs?.[0];
   const script = b?.script ?? {};
@@ -258,6 +262,26 @@ function plain(f: any, selfTraits?: Set<number>): boolean {
 }
 
 const isChancy = (v: any) => CHANCE_KEYS.some((k) => k in v);
+
+/*
+ * Quest conditions of a function, as Chaldea's FunctionExecutor checks them
+ * when the function runs: funcquestTvals against the quest's field traits
+ * (positive ids: any-of; negative ids: none-of) and svals EventId against the
+ * war's event (0 = none). Field traits only change at runtime through buffs we
+ * ignore (fieldIndividuality, addFieldChangeToField), which only add traits:
+ * an any-of condition evaluated on the quest's own traits can then only be
+ * missed, never wrongly met. A negative trait could be wrongly met, so it is
+ * unevaluable (null), as is an EventId that varies across levels.
+ */
+function questCond(f: any): { fieldTraits?: number[]; eventId?: number } | null {
+  const fieldTraits: number[] = (f.funcquestTvals ?? []).map((t: any) => t.id);
+  if (fieldTraits.some((id) => id <= 0)) return null;
+  const ev = new Set<number>();
+  for (const k of ['svals', ...OC_SVALS]) for (const v of f[k] ?? []) ev.add(v.EventId ?? 0);
+  if (ev.size > 1) return null;
+  const eventId = [...ev][0] ?? 0;
+  return { ...(fieldTraits.length && { fieldTraits }), ...(eventId && { eventId }) };
+}
 
 function levels(svals: any[], ok: boolean[]): LevelVal[] {
   return svals.map((v, i) => ({ value: ok[i] ? v.Value ?? 0 : 0, turns: v.Turn ?? -1, count: v.Count ?? -1 }));
@@ -297,6 +321,8 @@ export function convertFunctions(funcs: any[], unsupported: string[], opts: Conv
     // applies to every OC variant; plain() checks the keys of all of them.
     const sets: any[][] = [svals, ...OC_SVALS.map((k) => f[k]).filter(Boolean)];
     const isPlain = plain(f, opts.selfTraits);
+    // Not plain only because of quest conditions: kept with them when evaluable.
+    const qc = isPlain ? {} : plain(f, opts.selfTraits, true) ? questCond(f) : null;
     const okOf = (set: any[]) => set.map((v) => {
       if (isChancy(v)) return false;
       const r = v.Rate ?? 1000;
@@ -310,12 +336,12 @@ export function convertFunctions(funcs: any[], unsupported: string[], opts: Conv
     if (c.cls === 'ignore') continue;
     if (c.cls === 'unsupported') { unsupported.push(c.reason); continue; }
     // Helpful effect under a condition we cannot evaluate: dropped (we only lose
-    // a bonus). A non-helpful one is unsupported.
-    if (!isPlain) { if (NOT_HELPFUL.has(c.kind)) unsupported.push('cond:' + f.funcType); continue; }
+    // a bonus). A non-helpful one is unsupported, quest conditions included.
+    if (!isPlain && (!qc || NOT_HELPFUL.has(c.kind))) { if (NOT_HELPFUL.has(c.kind)) unsupported.push('cond:' + f.funcType); continue; }
     if (!setOk.some((s) => s.some(Boolean))) continue;
 
     // lv = OC1 values: code that ignores OC stays conservative for helpful effects.
-    const e: Effect = { kind: c.kind, target: TARGET[f.funcTargetType], lv: levels(svals, lvOk) };
+    const e: Effect = { kind: c.kind, target: TARGET[f.funcTargetType], lv: levels(svals, lvOk), ...qc };
     if (opts.npExtras && sets.length === 5 && sets.some((s) => JSON.stringify(s) !== JSON.stringify(svals))) {
       e.oc = sets.map((s, i) => levels(s, setOk[i]));
     }
@@ -386,6 +412,39 @@ export function faceOf(faces: Record<string, string> | undefined): string {
   return faces['1'] ?? Object.values(faces)[0] ?? '';
 }
 
+/*
+ * Event bonus passives (Atlas extraPassive with an eventId), as Chaldea's
+ * activateExtraPassive: at battle start, the skills whose event is the quest
+ * war's event, one per event (the highest priority). An event is kept only when
+ * none of its skills has a release condition (bond rank, ascension, level,
+ * quest, releaseConditions): those depend on account data we do not have, and
+ * a conditioned skill may be the one that wins on priority. Event-less extra
+ * passives are campaign bonuses (Chaldea skips the limited ones): ignored.
+ */
+function eventPassivesOf(svt: any, unsupported: string[], base: ConvOpts): EventPassive[] {
+  const byEvent = new Map<number, { skills: any[]; ok: boolean }>();
+  for (const sk of svt.extraPassive ?? []) {
+    const eps: any[] = sk.extraPassive ?? [];
+    const first = eps[0]?.eventId ?? 0;
+    if (!first) continue;
+    const g = byEvent.get(first) ?? { skills: [], ok: true };
+    byEvent.set(first, g);
+    g.skills.push(sk);
+    if (eps.some((ep) => ep.condFriendshipRank || ep.condLimitCount || ep.condLv || ep.condQuestId || ep.releaseConditions?.length)) g.ok = false;
+  }
+  const out: EventPassive[] = [];
+  for (const g of byEvent.values()) {
+    if (!g.ok) continue;
+    let best: any = null;
+    for (const sk of g.skills) if (!best || (sk.extraPassive[0].priority ?? 0) > (best.extraPassive[0].priority ?? 0)) best = sk;
+    const effects = convertFunctions(best.functions, unsupported, base);
+    if (!effects.length) continue;
+    const eventIds = [...new Set<number>(best.extraPassive.flatMap((ep: any) => [ep.eventId, ep.script?.otherValidEventId ?? 0]).filter(Boolean))];
+    out.push({ eventIds, effects });
+  }
+  return out;
+}
+
 /** `triggers`: skills run by trigger buffs (built by scripts/build-data.mjs).
  *  Without it, trigger buffs other than the on-hit ones are unsupported. */
 export function compactServant(svt: any, triggers?: TriggerLookup): CompactServant {
@@ -401,6 +460,7 @@ export function compactServant(svt: any, triggers?: TriggerLookup): CompactServa
     unsupported.push('func:transformServant');
   }
   const append2 = svt.appendPassive?.find((a: any) => a.num === 101)?.skill;
+  const eventPassives = eventPassivesOf(svt, unsupported, base);
   return {
     id: svt.id, collectionNo: svt.collectionNo, name: svt.name,
     face: faceOf(svt.extraAssets?.faces?.ascension),
@@ -409,21 +469,43 @@ export function compactServant(svt: any, triggers?: TriggerLookup): CompactServa
     atkGrowth: svt.atkGrowth,
     skills: skillsOf(svt.skills, unsupported, base),
     passives: svt.classPassive.flatMap((p: any) => convertFunctions(p.functions, unsupported, base)),
+    ...(eventPassives.length && { eventPassives }),
     append2: append2 ? append2.functions[0].svals.map((v: any) => v.Value) : [],
     np: npOf(svt, unsupported, base),
     unsupported: [...new Set(unsupported)],
   };
 }
 
+/*
+ * CE skills, per skill num as Chaldea's getActivatedSkills: the MLB variants
+ * (condLimitCount 4) of a num when it has any, else its base ones (0). Every
+ * skill of the chosen group runs. Several skills in one group are usually
+ * reruns of an event bonus on different field traits (only one can match);
+ * on point-buff events (Chaldea's eventPointBuffGroupSkillNumMap) they are the
+ * levels of one bonus, of which Chaldea runs at most one: a field-conditioned
+ * effect whose traits overlap another skill of its group is dropped.
+ */
 export function compactCE(ce: any, triggers?: TriggerLookup): CompactCE {
   const unsupported: string[] = [];
-  const base = ce.skills.filter((s: any) => (s.condLimitCount ?? 0) === 0);
-  const mlb = ce.skills.filter((s: any) => s.condLimitCount === 4);
-  const conv = (ss: any[]) => ss.flatMap((s) => convertFunctions(s.functions, unsupported, { triggers }));
+  const nums = [...new Set<number>(ce.skills.map((s: any) => s.num))].sort((a, b) => a - b);
+  const group = (num: number, mlb: boolean) => {
+    const ss = ce.skills.filter((s: any) => s.num === num);
+    const lb = ss.filter((s: any) => s.condLimitCount === 4);
+    return mlb && lb.length ? lb : ss.filter((s: any) => (s.condLimitCount ?? 0) === 0);
+  };
+  const conv = (mlb: boolean) => nums.flatMap((num) => {
+    const per: Effect[][] = group(num, mlb).map((s: any) => convertFunctions(s.functions, unsupported, { triggers }));
+    if (per.length < 2) return per.flat();
+    const traitsOf = (es: Effect[]) => new Set(es.flatMap((e) => e.fieldTraits ?? []));
+    return per.flatMap((es, i) => {
+      const others = new Set(per.flatMap((o, j) => (j === i ? [] : [...traitsOf(o)])));
+      return es.filter((e) => !e.fieldTraits?.some((t) => others.has(t)));
+    });
+  });
   return {
     id: ce.id, collectionNo: ce.collectionNo, name: ce.name, face: faceOf(ce.extraAssets?.faces?.equip),
     atkGrowth: ce.atkGrowth,
-    effects: conv(base), effectsMlb: mlb.length ? conv(mlb) : conv(base),
+    effects: conv(false), effectsMlb: conv(true),
     unsupported: [...new Set(unsupported)],
   };
 }

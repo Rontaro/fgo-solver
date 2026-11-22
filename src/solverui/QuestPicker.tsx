@@ -68,6 +68,8 @@ export function QuestPicker({ region, wars, onChange }: { region: Region; wars: 
   const item = sel ? byId.get(sel.id) ?? null : null;
   const quest = item?.quest ?? null;
   const phase = sel?.phase ?? null;
+  // Atlas quest phases only carry warId: the event (for event-conditioned effects) comes from the war index.
+  const eventId = item?.war.eventId ?? 0;
 
   useEffect(() => {
     setSel(null); setQuery(''); setRecent(loadRecent(region)); setFavs(loadFavs(region));
@@ -80,8 +82,9 @@ export function QuestPicker({ region, wars, onChange }: { region: Region; wars: 
     setPicked(null); setErr(null); onChange(null);
     if (!quest || phase === null) return;
     let alive = true;
-    fetchQuest(region, quest.id, phase).then((raw) => {
+    fetchQuest(region, quest.id, phase).then((fetched) => {
       if (!alive) return;
+      const raw: RawQuest = eventId ? { ...fetched, eventId } : fetched;
       let unsupported: readonly string[] | null = null;
       try { questFromAtlas(raw); } catch (e) {
         if (e instanceof UnsupportedQuestError) unsupported = e.reasons;
@@ -91,7 +94,7 @@ export function QuestPicker({ region, wars, onChange }: { region: Region; wars: 
       setPicked(p); onChange(p);
     }, (e: unknown) => { if (alive) setErr(e instanceof Error ? e.message : String(e)); });
     return () => { alive = false; };
-  }, [region, quest, phase]);
+  }, [region, quest, phase, eventId]);
 
   /** Selects a quest at `ph` (when valid) or its last phase, and records it as recent. */
   const choose = (it: QuestItem, ph?: number) => {
