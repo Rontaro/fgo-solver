@@ -5,10 +5,10 @@ import { loadFavs, loadRecent, pushRecent, saveFavs, saveRecent, type RecentNode
 import { lastPhase, questIndex, searchQuests, type QuestItem } from './questSearch';
 import { useT } from '../i18n';
 
-export interface PickedQuest { raw: RawQuest; label: string; unsupported: readonly string[] | null }
+export interface PickedQuest { raw: RawQuest; label: string; unsupported: readonly string[] | null; id: number; phase: number; eventId: number }
 
 const cache = new Map<string, Promise<RawQuest>>();
-function fetchQuest(region: Region, id: number, phase: number): Promise<RawQuest> {
+export function fetchQuest(region: Region, id: number, phase: number): Promise<RawQuest> {
   const url = `https://api.atlasacademy.io/nice/${region}/quest/${id}/${phase}`;
   let p = cache.get(url);
   if (!p) {
@@ -50,7 +50,12 @@ function Star({ on, onToggle, name, tabIndex }: { on: boolean; onToggle: () => v
 
 const where = (it: QuestItem) => it.war.warName + (it.quest.spot ? ` · ${it.quest.spot}` : '');
 
-export function QuestPicker({ region, wars, onChange }: { region: Region; wars: QuestWar[]; onChange: (q: PickedQuest | null) => void }) {
+/** preset: a node to select (n changes on every request, so the same node can be asked again). */
+export interface QuestPreset { id: number; phase: number; n: number }
+
+export function QuestPicker({ region, wars, onChange, preset }: {
+  region: Region; wars: QuestWar[]; onChange: (q: PickedQuest | null) => void; preset?: QuestPreset | null;
+}) {
   const tt = useT();
   const t = tt.quest;
   const [query, setQuery] = useState('');
@@ -90,11 +95,18 @@ export function QuestPicker({ region, wars, onChange }: { region: Region; wars: 
         if (e instanceof UnsupportedQuestError) unsupported = e.reasons;
         else { setErr(e instanceof Error ? e.message : String(e)); return; }
       }
-      const p = { raw, label: `${quest.name} (${phase})`, unsupported };
+      const p = { raw, label: `${quest.name} (${phase})`, unsupported, id: quest.id, phase, eventId };
       setPicked(p); onChange(p);
     }, (e: unknown) => { if (alive) setErr(e instanceof Error ? e.message : String(e)); });
     return () => { alive = false; };
   }, [region, quest, phase, eventId]);
+
+  useEffect(() => {
+    if (!preset) return;
+    const it = byId.get(preset.id);
+    if (it) choose(it, preset.phase);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preset?.n]);
 
   /** Selects a quest at `ph` (when valid) or its last phase, and records it as recent. */
   const choose = (it: QuestItem, ph?: number) => {

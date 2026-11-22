@@ -11,8 +11,11 @@ import { AboutPage } from './pages/AboutPage';
 import { Footer } from './pages/Footer';
 import { LandingPage } from './pages/LandingPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { TeamsPage } from './saved/TeamsPage';
+import { ResultsPage } from './saved/ResultsPage';
+import type { SolverLoad } from './solverui/SolverPage';
 
-type Tab = 'roster' | 'catalog' | 'solver' | 'settings';
+type Tab = 'roster' | 'catalog' | 'solver' | 'teams' | 'results' | 'settings';
 const REGIONS: Region[] = ['NA', 'JP'];
 
 /** The site's mark (also the favicon's shape). */
@@ -31,6 +34,9 @@ function Shell() {
   const page = usePage();
   // Kept here so the tab survives a trip to Home or About.
   const [tab, setTab] = useState<Tab>('roster');
+  // A team / node to load into the solver (Teams and Results tabs).
+  const [load, setLoad] = useState<SolverLoad | null>(null);
+  const openInSolver = (l: Omit<SolverLoad, 'n'>) => { setLoad({ ...l, n: Date.now() }); setTab('solver'); };
   const t = useT();
   useEffect(() => { document.title = page === 'about' ? t.titles.about : t.titles.default; }, [page, t]);
   const [lang, setLang] = useLang();
@@ -77,6 +83,8 @@ function Shell() {
           <button className={tabCls('roster')} onClick={() => setTab('roster')}>{t.app.tabs.roster}</button>
           <button className={tabCls('catalog')} onClick={() => setTab('catalog')}>{t.app.tabs.catalog}</button>
           <button className={tabCls('solver')} onClick={() => setTab('solver')}>{t.app.tabs.solver}</button>
+          <button className={tabCls('teams')} onClick={() => setTab('teams')}>{t.app.tabs.teams}</button>
+          <button className={tabCls('results')} onClick={() => setTab('results')}>{t.app.tabs.results}</button>
           <button className={tabCls('settings')} onClick={() => setTab('settings')}>{t.app.tabs.settings}</button>
         </nav>}
       </header>
@@ -95,7 +103,8 @@ function Shell() {
           </div>
         )}
         {loading && <p className="text-night-400">{t.app.loading(region)}</p>}
-        {data && (tab === 'roster' ? <RosterPage /> : tab === 'catalog' ? <CatalogPage /> : tab === 'solver' ? <SolverPage /> : <SettingsPage />)}
+        {data && (tab === 'roster' ? <RosterPage /> : tab === 'catalog' ? <CatalogPage /> : tab === 'solver' ? <SolverPage load={load} />
+          : tab === 'teams' ? <TeamsPage onLoad={openInSolver} /> : tab === 'results' ? <ResultsPage onLoad={openInSolver} /> : <SettingsPage />)}
       </main>}
       <Footer />
     </div>

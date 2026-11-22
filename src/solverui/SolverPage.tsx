@@ -9,7 +9,9 @@ import { compareSolutions, type NearMiss, type Partial, type Solution, type Solv
 import type { Slot } from '../solver/autocomplete';
 import type { InMsg, OutMsg, Progress } from '../solver/worker-handler';
 import { defaultMc, describeTurns, formatTurns, ownedToMember, slotEnemyNames, supportMember, SUPPORT_POOL_CAP, type CeChoice } from './members';
-import { QuestPicker, type PickedQuest } from './QuestPicker';
+import { QuestPicker, type PickedQuest, type QuestPreset } from './QuestPicker';
+import { addResult, addTeam, type SavedQuest } from '../saved/store';
+import { dataVersionOf, toSavedMember } from '../saved/verify';
 import { emptySlot, TeamBuilder, type SlotState } from './TeamBuilder';
 import { defaultMaxS, noSolutionKind } from './picker';
 import { MarginBars, TurnSteps } from './TurnSteps';
@@ -25,9 +27,12 @@ const MAX_SHOWN = 50;
 const FGA = import.meta.env.VITE_ENABLE_FGA === 'true';
 
 interface Found { solution: Solution; team?: string[] }
-interface Run { kind: 'team' | 'autocomplete'; front: string[]; back: string[]; mc: CompactMC; quest: string; slotNames: (string | undefined)[][] }
+interface Run { kind: 'team' | 'autocomplete'; front: string[]; back: string[]; mc: CompactMC; quest: string; q: SavedQuest; slotNames: (string | undefined)[][] }
 
-export function SolverPage() {
+/** A team and / or node to load into the solver (from the Teams / Results tabs); n changes on every request. */
+export interface SolverLoad { n: number; slots?: SlotState[]; mcId?: number | null; quest?: { id: number; phase: number } }
+
+export function SolverPage({ load }: { load?: SolverLoad | null }) {
   const { region, data } = useRegionData();
   const tt = useT();
   const t = tt.solver;
@@ -50,6 +55,16 @@ export function SolverPage() {
   const worker = useRef<Worker | null>(null);
   const jobId = useRef(0);
   const members = useRef(new Map<string, TeamMember>());
+  const [preset, setPreset] = useState<QuestPreset | null>(null);
+  const [savedKeys, setSavedKeys] = useState<Set<string>>(new Set());
+  const [note, setNote] = useState('');
+
+  useEffect(() => {
+    if (!load) return;
+    if (load.slots) setSlots(load.slots.map((s) => ({ ...s })));
+    if (load.mcId !== undefined && load.mcId !== null) setMcId(load.mcId);
+    if (load.quest) setPreset({ ...load.quest, n: load.n });
+  }, [load?.n]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     let alive = true;
@@ -112,7 +127,9 @@ export function SolverPage() {
     }
     members.current = map;
     const k = team.map((m) => m.key);
-    setRun({ kind: isAuto ? 'autocomplete' : 'team', front: k.slice(0, 3), back: k.slice(3), mc, quest: quest.label, slotNames: slotEnemyNames(quest.raw) });
+    setRun({ kind: isAuto ? 'autocomplete' : 'team', front: k.slice(0, 3), back: k.slice(3), mc, quest: quest.label,
+      q: { id: quest.id, phase: quest.phase, label: quest.label, eventId: quest.eventId }, slotNames: slotEnemyNames(quest.raw) });
+    setSavedKeys(new Set());
     setFound([]); setStats(null); setBest(undefined); setClosest(null); setExhausted(null); setStoppedByUser(false); setError(null); setRunning(true);
 
     w.onmessage = (e: MessageEvent<OutMsg>) => {
@@ -149,6 +166,31 @@ export function SolverPage() {
     void navigator.clipboard?.writeText(toFgaCommand(f.solution, fgaTeam(keys)));
   };
 
+  const saveTeam = () => {
+    const name = window.prompt(tt.saved.teamNamePrompt, quest?.label ?? '');
+    if (name === null) return;
+    void addTeam(region, { name: name.trim() || tt.saved.untitled, slots: slots.map((s) => ({ ...s })), mcId }).then(() => setNote(tt.saved.teamSaved));
+  };
+  /** Saves a found solution or the closest line (Results tab). */
+  const saveResult = (id: string, keys: string[], front: string[], back: string[], x: { kind: 'solution'; s: Solution } | { kind: 'closest'; c: NearMiss }) => {
+    if (!run) return;
+    const ms = keys.flatMap((k) => { const m = members.current.get(k); return m ? [toSavedMember(m, !k.startsWith('r'))] : []; });
+    const base = {
+      name: run.quest, quest: run.q, members: ms, front, back, mcId: run.mc.id, dataVersion: dataVersionOf(data),
+    };
+    const rec = x.kind === 'solution'
+      ? { ...base, kind: 'solution' as const, turns: x.s.turns, margins: x.s.margins, actions: x.s.actions, usesSwap: x.s.usesSwap }
+      : { ...base, kind: 'closest' as const, turns: x.c.turns, missingPct: x.c.missingPct,
+        actions: x.c.turns.flat().filter((st) => st.kind !== 'np').length, usesSwap: x.c.turns.flat().some((st) => !!st.swap) };
+    void addResult(region, rec).then(() => { setSavedKeys((p) => new Set(p).add(id)); setNote(tt.saved.resultSaved); });
+  };
+  const saveBtn = (id: string, onClick: () => void) => (
+    <button type="button" onClick={onClick} disabled={savedKeys.has(id)}
+      className="rounded-md border border-gold-500/40 px-2.5 py-1 text-xs text-gold-300 hover:border-gold-400 disabled:opacity-50">
+      {savedKeys.has(id) ? tt.saved.saved : tt.saved.saveResult}
+    </button>
+  );
+
   const stop = () => {
     const w = worker.current;
     if (!w) return;
@@ -162,9 +204,10 @@ export function SolverPage() {
 
   return (
     <div className="space-y-4">
-      <QuestPicker region={region} wars={data.quests} onChange={setQuest} />
+      <QuestPicker region={region} wars={data.quests} onChange={setQuest} preset={preset} />
       <TeamBuilder slots={slots} setSlots={setSlots} servants={data.servants} ces={data.ces} mcs={data.mcs} owned={owned}
-        mcId={mcId} setMcId={setMcId} maxS={maxS} setMaxS={setMaxS} isAuto={isAuto} defaultMaxS={defaultMaxS(isAuto)} />
+        mcId={mcId} setMcId={setMcId} maxS={maxS} setMaxS={setMaxS} isAuto={isAuto} defaultMaxS={defaultMaxS(isAuto)} onSaveTeam={saveTeam} />
+      {note && <p role="status" className="text-sm text-gold-300">{note}</p>}
       <section className={`panel space-y-4 ${sorted.length > 0 ? 'border-gold-500 shadow-[0_0_40px_rgba(217,184,108,0.12)]' : ''}`}>
         <h2 className="flex items-baseline gap-3"><span className="panel-num" aria-hidden="true">III</span><span className="panel-title">{t.heading}</span></h2>
         <div className="flex flex-wrap items-center gap-3">
@@ -201,6 +244,7 @@ export function SolverPage() {
           <div className="space-y-3 rounded-lg border border-amber-500/40 bg-night-950/60 p-4 text-sm">
             <p className="font-semibold text-amber-200">{t.closestTitle((closest.missingPct * 100).toFixed(1))}</p>
             <p className="text-xs text-night-300">{t.closestNote}</p>
+            {saveBtn('closest', () => saveResult('closest', [...run.front, ...run.back], run.front, run.back, { kind: 'closest', c: closest }))}
             <TurnSteps turns={describeTurns(closest.turns, run.front, run.back, run.mc)} unit={unit}
               enemyAt={(tn, slot) => run.slotNames[tn]?.[slot]} />
           </div>
@@ -217,7 +261,10 @@ export function SolverPage() {
             <div key={i} className="space-y-3 rounded-lg border border-gold-500/25 bg-night-950/60 p-4 text-sm">
               <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-night-400">
                 <span>{t.actions(f.solution.actions)}{f.solution.usesSwap ? t.orderChange : ''}</span>
-                <MarginBars margins={f.solution.margins} />
+                <span className="flex items-center gap-3">
+                  <MarginBars margins={f.solution.margins} />
+                  {saveBtn(`s${i}`, () => saveResult(`s${i}`, tk, [...front], [...back], { kind: 'solution', s: f.solution }))}
+                </span>
               </div>
               {f.team && (
                 <div className="flex flex-wrap items-center gap-1.5 text-gold-300">

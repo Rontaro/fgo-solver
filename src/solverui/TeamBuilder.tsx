@@ -24,11 +24,13 @@ interface Props {
   mcId: number | null; setMcId: (id: number) => void; maxS: number; setMaxS: (s: number) => void;
   /** Some slot is "Any": the run is an autocomplete. */
   isAuto: boolean; defaultMaxS: number;
+  /** Saves the current team (Teams tab); absent = no button. */
+  onSaveTeam?: () => void;
 }
 
 type Picking = { slot: number; what: 'servant' | 'ce' };
 
-export function TeamBuilder({ slots, setSlots, servants, ces, mcs, owned, mcId, setMcId, maxS, setMaxS, isAuto, defaultMaxS }: Props) {
+export function TeamBuilder({ slots, setSlots, servants, ces, mcs, owned, mcId, setMcId, maxS, setMaxS, isAuto, defaultMaxS, onSaveTeam }: Props) {
   const tt = useT();
   const t = tt.team;
   const sup = getSettings().support;
@@ -138,7 +140,12 @@ export function TeamBuilder({ slots, setSlots, servants, ces, mcs, owned, mcId, 
   const ps = p ? slots[p.slot] : null;
   return (
     <section className="panel space-y-4">
-      <h2 className="flex items-baseline gap-3"><span className="panel-num" aria-hidden="true">II</span><span className="panel-title">{t.heading}</span></h2>
+      <div className="flex flex-wrap items-center gap-3">
+        <h2 className="flex items-baseline gap-3"><span className="panel-num" aria-hidden="true">II</span><span className="panel-title">{t.heading}</span></h2>
+        {onSaveTeam && slots.some((s) => s.kind !== 'empty') && (
+          <button type="button" onClick={onSaveTeam} className="ml-auto rounded-md border border-gold-500/40 px-2.5 py-1 text-xs text-gold-300 hover:border-gold-400">{t.saveTeam}</button>
+        )}
+      </div>
       {presets.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5" title={t.presetTitle}>
           <span className="text-xs text-night-400">{t.presets}</span>
