@@ -409,6 +409,30 @@ interface ConvOpts {
 }
 
 /**
+ * Battle-start effects (opts.start): a condition on the target unit's fixed
+ * traits, removed from the function so plain() accepts it, and returned as the
+ * any-of list Effect.holderTraits. Only positive trait ids; functvals on any
+ * of our own targets, INDIVIDUALITIE as a single trait (with at most
+ * ProgressSelfTurn beside it).
+ */
+function holderCond(f: any): { f: any; holderTraits?: number[] } {
+  const tv: number[] = (f.functvals ?? []).map((t: any) => t.id);
+  const b = f.buffs?.[0];
+  const ind = b?.script?.INDIVIDUALITIE;
+  const scriptOk = ind && typeof ind.id === 'number' && ind.id > 0
+    && Object.keys(b.script).every((k: string) => k === 'INDIVIDUALITIE' || k === 'ProgressSelfTurn');
+  if (!(tv.length && tv.every((t) => t > 0)) && !scriptOk) return { f };
+  const traits = [...(tv.length && tv.every((t) => t > 0) ? tv : []), ...(scriptOk ? [ind.id] : [])];
+  if (tv.length && scriptOk) return { f }; // both at once: not handled (all-of vs any-of)
+  const out = { ...f, ...(tv.length && { functvals: [] }) };
+  if (scriptOk) {
+    const { INDIVIDUALITIE: _i, ...rest } = b.script;
+    out.buffs = [{ ...b, script: rest }, ...f.buffs.slice(1)];
+  }
+  return { f: out, holderTraits: traits };
+}
+
+/**
  * Battle-start effects (opts.start): sval OnField = 1 on every level and
  * variant ties the buff to its holder being on the field. Returns the
  * function without the key (so plain() accepts it) and whether it was there;
@@ -514,7 +538,12 @@ export function convertFunctions(funcs: any[], unsupported: string[], opts: Conv
   let afterDamage = false;
   for (const f0 of funcs) {
     if (opts.npDamage && f0 === opts.npDamage) { prevOk = true; afterDamage = true; continue; }
-    const { f, onField } = opts.start ? stripOnField(f0) : { f: f0, onField: false };
+    const stripped = opts.start ? stripOnField(f0) : { f: f0, onField: false };
+    const onField = stripped.onField;
+    // Battle-start effects: a condition on the unit's fixed traits (function
+    // functvals, or the buff script's single INDIVIDUALITIE) is kept as
+    // Effect.holderTraits and checked by the engine at battle start.
+    const { f, holderTraits } = opts.start ? holderCond(stripped.f) : { f: stripped.f, holderTraits: undefined };
     // team=enemy: only runs when an enemy casts it. Never for our side.
     if (f.funcTargetTeam === 'enemy') { prevOk = false; continue; }
     const svals: any[] = f.svals ?? [];
@@ -624,6 +653,7 @@ export function convertFunctions(funcs: any[], unsupported: string[], opts: Conv
     const e: Effect = { kind: c.kind, target: TARGET[f.funcTargetType], lv: levels(svals, lvOk), ...qc };
     if (opts.start && (f.funcTargetType === 'ptFull' || f.funcTargetType === 'ptOtherFull')) e.full = true;
     if (onField) e.onField = true;
+    if (holderTraits) e.holderTraits = holderTraits;
     if (opts.npExtras && sets.length === 5 && sets.some((s) => JSON.stringify(s) !== JSON.stringify(svals))) {
       e.oc = sets.map((s, i) => levels(s, setOk[i]));
     }

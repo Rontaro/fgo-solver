@@ -74,6 +74,13 @@ export interface Effect {
    * can target (only the ones in compact.ts RATE_TRAITS, to keep the data small).
    */
   buffTraits?: number[];
+  /**
+   * CE / event passive effects only: the effect applies only to a unit with
+   * one of these fixed traits (Atlas functvals on the function, or the buff
+   * script's INDIVIDUALITIE), checked at battle start (e.g. Kaleid Sapphire:
+   * female or unknown gender; Phantasmal Princess: Berserkers).
+   */
+  holderTraits?: number[];
   /** transform: the form the holder switches to. */
   toForm?: 'low' | 'high';
   /** allyDeath: allies with one of these traits are skipped. */

@@ -493,6 +493,8 @@ export function initBattle(members: readonly TeamMember[], mc: CompactMC, mcLv: 
     for (const e of start) {
       const v = e.lv[0];
       if (!v || v.value === 0 || !effectActive(e, cond)) continue;
+      // A condition on the target's fixed traits: on this unit for a self effect (else per target, below).
+      if (e.holderTraits && e.target === 'self' && !svt.traits.some((t) => e.holderTraits!.includes(t))) continue;
       if (e.target !== 'self' || e.onField) {
         if (e.target === 'self' || e.target === 'ptAll' || e.target === 'ptOther') party.push({ e, v, holder: m.key, castBlocked });
         continue;
@@ -517,7 +519,7 @@ export function initBattle(members: readonly TeamMember[], mc: CompactMC, mcLv: 
     units.forEach((u, i) => {
       const reach = e.target === 'self' ? u.key === holder
         : (e.full || i < 3) && (e.target === 'ptAll' || u.key !== holder);
-      if (!reach) return;
+      if (!reach || (e.holderTraits && !u.svt.traits.some((t) => e.holderTraits!.includes(t)))) return;
       if (e.kind === 'gainNp') {
         if (!e.onField) units[i] = { ...u, gauge: Math.min(gaugeCap(u.npLv), u.gauge + v.value) };
       } else if (isBuffKind(e.kind) && !castBlocked) {
