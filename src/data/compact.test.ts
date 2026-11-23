@@ -214,7 +214,10 @@ describe('convertFunctions', () => {
     ignored(func('subState', 'ptAll', {}, { traitVals: [{ id: 3011 }, { id: 3026 }, { id: 3015 }] }));
     // Defence ups (not modelled on our side) and mental debuffs: nothing we model is removed.
     ignored(func('subState', 'self', {}, { traitVals: [{ id: 3007 }] }));
-    expect(run([func('subState', 'self', {}, { traitVals: [{ id: 3004 }] })]).unsupported).toEqual(['func:subState']);
+    // Removing every positive buff (Hassan of the Hundred S3): the clearBuffs demerit.
+    expect(run([func('subState', 'self', {}, { traitVals: [{ id: 3004 }] })]).out).toEqual([{ kind: 'clearBuffs', target: 'self', lv: [{ value: 1, turns: -1, count: -1 }] }]);
+    // Removing buffs of some other kind (a trait we do not track) stays unsupported.
+    expect(run([func('subState', 'self', {}, { traitVals: [{ id: 2386 }] })]).unsupported).toEqual(['func:subState']);
   });
   it('ptOtherFull maps to ptOther (backline buff dropped: conservative)', () => {
     expect(run([buff('upAtk', 'ptOtherFull')]).out[0].target).toBe('ptOther');
@@ -257,9 +260,13 @@ describe('convertFunctions', () => {
   });
   it('harmful functions on allies are unsupported, demerits modelled', () => {
     expect(run([func('lossNp')]).out).toEqual([{ kind: 'lossNp', target: 'self', lv: [{ value: 1000, turns: -1, count: -1 }] }]);
+    expect(run([buff('multiattack', 'self')])).toEqual({ out: [], unsupported: [] });
     expect(run([buff('downAtk', 'self')]).out).toEqual([{ kind: 'atkUp', target: 'self', lv: [{ value: -200, turns: 3, count: -1 }] }]);
     expect(run([func('instantDeath', 'ptOne')]).unsupported).toEqual(['func:instantDeath']);
-    expect(run([func('subState', 'self', {}, { traitVals: [{ id: 3004 }] })]).unsupported).toEqual(['func:subState']);
+    // Removing every positive buff (Hassan of the Hundred S3): the clearBuffs demerit.
+    expect(run([func('subState', 'self', {}, { traitVals: [{ id: 3004 }] })]).out).toEqual([{ kind: 'clearBuffs', target: 'self', lv: [{ value: 1, turns: -1, count: -1 }] }]);
+    // Removing buffs of some other kind (a trait we do not track) stays unsupported.
+    expect(run([func('subState', 'self', {}, { traitVals: [{ id: 2386 }] })]).unsupported).toEqual(['func:subState']);
     expect(run([func('subState', 'self')]).unsupported).toEqual(['func:subState']);
     // Removing debuffs only (traitVals = buffNegativeEffect) can only help.
     expect(run([func('subState', 'self', {}, { traitVals: [{ id: 3005 }] })])).toEqual({ out: [], unsupported: [] });

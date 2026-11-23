@@ -282,6 +282,8 @@ function classify(f: any, ctx: Ctx = { depth: 0, flip: false }): Class {
     if (side === 'ally' && BUFF_KIND[t]) return { cls: 'apply', kind: BUFF_KIND[t] };
     if (side === 'enemy' && ENEMY_DEBUFF_KIND[t] && ctx.depth === 0 && !ctx.flip) return { cls: 'apply', kind: ENEMY_DEBUFF_KIND[t] };
     if (side === 'ally' && DEMERIT_BUFF[t] && ctx.depth === 0 && !ctx.flip) return { cls: 'apply', kind: DEMERIT_BUFF[t], demerit: true };
+    // Extra hits on some cards (Musashi Berserker S2): more damage, not modelled (dropped).
+    if (side === 'ally' && t === 'multiattack') return { cls: 'ignore', drop: 'buff:multiattack' };
     if (side === 'ally' && t === 'overwriteClassRelation' && ctx.depth === 0 && !ctx.flip) {
       // Only the attack side matters (enemies never attack); only "overwriteForce" is modelled.
       const atk = f.buffs[0].script?.relationId?.atkSide ?? {};
@@ -317,6 +319,10 @@ function classify(f: any, ctx: Ctx = { depth: 0, flip: false }): Class {
   if (side === 'ally' && f.funcType === 'subState') {
     const tv: number[] = (f.traitVals ?? []).map((t: any) => t.id);
     if (tv.length && tv.every((id) => DEBUFF_TRAITS.has(id))) return { cls: 'ignore' };
+    // Removing every positive buff (3004), alone or with debuff traits: modelled as clearBuffs.
+    if (ctx.depth === 0 && !ctx.flip && tv.includes(3004) && tv.every((id) => id === 3004 || DEBUFF_TRAITS.has(id))) {
+      return { cls: 'apply', kind: 'clearBuffs', demerit: true };
+    }
   }
   if ((side === 'ally' ? IGNORED_FUNCS_ALLY : IGNORED_FUNCS_ENEMY).has(f.funcType)) return { cls: 'ignore' };
   return { cls: 'unsupported', reason: 'func:' + f.funcType + at };
@@ -589,7 +595,7 @@ export function convertFunctions(funcs: any[], unsupported: string[], opts: Conv
       // Certain whatever its Rate (pessimistic): seals / stun count 1, an ATK
       // down is a negative atkUp, an NP loss its value. No condition kept.
       const lvAll = (set: any[]) => set.map((v) => ({
-        value: CONTROL_KINDS.has(c.kind) || c.kind === 'selfDeath' ? 1 : c.kind === 'atkUp' ? -Math.abs(v.Value ?? 0) : Math.abs(v.Value ?? 0),
+        value: CONTROL_KINDS.has(c.kind) || c.kind === 'selfDeath' || c.kind === 'clearBuffs' ? 1 : c.kind === 'atkUp' ? -Math.abs(v.Value ?? 0) : Math.abs(v.Value ?? 0),
         turns: v.Turn ?? -1, count: v.Count ?? -1,
       }));
       const e: Effect = { kind: c.kind, target: TARGET[f.funcTargetType], lv: lvAll(svals) };

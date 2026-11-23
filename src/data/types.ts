@@ -37,6 +37,10 @@ export type EffectKind =
   // The holder switches form (Atlas transformServant on itself, Melusine /
   // Ptolemaios): Effect.toForm, see data/forms.ts.
   | 'transform'
+  // Removes the holder's removable positive buffs (Atlas subState of
+  // buffPositiveEffect on our side, Hassan of the Hundred Personas S3): a
+  // demerit. Passive / CE buffs (battle start) cannot be removed.
+  | 'clearBuffs'
   // Debuffs on enemies (target enemy / enemyAll), see Enemy.debuffs in the
   // engine: DEF down (Atlas downDefence) and card resistance down
   // (downDefencecommandall, Effect.cards = the attacking cards it applies to).

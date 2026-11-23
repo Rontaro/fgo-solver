@@ -60,9 +60,10 @@ describe('initBattle', () => {
     const ceBuff: Effect = { kind: 'npDmgUp', target: 'self', lv: [lv(150, -1)] };
     const ce = { ...kaleidoscope, effects: [ceBuff, { kind: 'atkUp' as const, target: 'self' as const, lv: [lv(100, 3)] }] };
     expect(unit(start([member(altria, 'a', { ce })]), 'a').buffs).toEqual([
-      { kind: 'cardUp', value: 80, turns: -1, count: -1, cards: ['quick'] },
-      { kind: 'npDmgUp', value: 150, turns: -1, count: -1 },
-      { kind: 'atkUp', value: 100, turns: 3, count: -1 },
+      // passive: from a passive / CE at battle start (clearBuffs cannot remove them).
+      { kind: 'cardUp', value: 80, turns: -1, count: -1, cards: ['quick'], passive: true },
+      { kind: 'npDmgUp', value: 150, turns: -1, count: -1, passive: true },
+      { kind: 'atkUp', value: 100, turns: 3, count: -1, passive: true },
     ]);
   });
   it('first 3 members on the front line, the rest in the back; wave 1 loaded', () => {
@@ -274,7 +275,7 @@ describe('endTurn', () => {
     expect(hasAtk(s)).toBe(false); // turn 4
     expect(unit(s, 'cas').cd).toEqual([3, 0, 0]);
     expect(s.turn).toBe(4);
-    expect(unit(s, 'alt').buffs).toEqual([{ kind: 'cardUp', value: 80, turns: -1, count: -1, cards: ['quick'] }]);
+    expect(unit(s, 'alt').buffs).toEqual([{ kind: 'cardUp', value: 80, turns: -1, count: -1, cards: ['quick'], passive: true }]);
   });
   it('back-line buffs and cooldowns stay frozen', () => {
     // Altria uses S1 (cd 5, atkUp 3 turns) and is swapped out.

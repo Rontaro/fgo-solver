@@ -18,6 +18,8 @@ export interface Buff {
   readonly src?: string;
   /** classRel: see Effect.classRel. */
   readonly classRel?: Record<string, Record<string, number>>;
+  /** From a passive, a CE or an event passive (battle start): cannot be removed (clearBuffs). */
+  readonly passive?: true;
 }
 /**
  * A deferred effect waiting on its holder (Effect.deferred): it runs at the
@@ -286,7 +288,7 @@ export const canSkill = (u: Unit): boolean => !u.buffs.some((b) => b.kind === 's
 export const isHarmful = (e: Effect): boolean =>
   // classRel may lower a relation (Semiramis: Assassin vs Caster x1): harmful-capable.
   // transform may be worse (an AoE NP on a single boss): never forced either.
-  (e.kind === 'lossNp' && !e.deferred) || e.kind === 'lossHp' || e.kind === 'selfDeath' || e.kind === 'allyDeath' || e.kind === 'classRel' || e.kind === 'transform' || CONTROL.has(e.kind) || e.lv.some((v) => v.value < 0);
+  (e.kind === 'lossNp' && !e.deferred) || e.kind === 'lossHp' || e.kind === 'selfDeath' || e.kind === 'allyDeath' || e.kind === 'classRel' || e.kind === 'transform' || e.kind === 'clearBuffs' || CONTROL.has(e.kind) || e.lv.some((v) => v.value < 0);
 const MOD_FIELD: Record<Exclude<BuffKind, 'buffRate' | 'sealNp' | 'sealSkill' | 'stun' | 'classRel'>, keyof Mods> = {
   atkUp: 'atkMod', cardUp: 'cardMod', npDmgUp: 'npDmgMod', powerUp: 'powerMod',
   npGainUp: 'npGainMod', ocUp: 'ocUp', dmgPlus: 'dmgPlus',
@@ -348,6 +350,13 @@ function effectOn(u: Unit, e: Effect, v: LevelVal): Unit {
   }
   if (e.kind === 'gainNp') return { ...u, gauge: Math.min(gaugeCap(u.npLv), u.gauge + v.value) };
   if (e.kind === 'lossNp') return { ...u, gauge: Math.max(0, u.gauge - v.value) };
+  if (e.kind === 'clearBuffs') {
+    // Positive buffs from skills / NPs go; passive ones, demerits (negative values,
+    // seals) stay. Pending deferred effects that help go too; a pending NP drain stays.
+    const buffs = u.buffs.filter((b) => b.passive || b.value <= 0 || CONTROL.has(b.kind));
+    const pending = u.pending.filter((p) => p.e.kind === 'lossNp');
+    return { ...u, buffs, pending: pending.length ? pending : NO_PENDING };
+  }
   if (e.kind === 'transform') {
     // New kit (skills, NP) of the other form; levels, cooldowns, buffs and gauge are kept.
     if (!e.toForm) return u;
@@ -472,7 +481,7 @@ export function initBattle(members: readonly TeamMember[], mc: CompactMC, mcLv: 
     for (const e of svt.passives) {
       const v = e.lv[0];
       if (castBlocked) break; // conservative: its own passive buffs are dropped too
-      if (v && v.value !== 0 && v.turns === -1 && e.target === 'self' && isBuffKind(e.kind) && effectActive(e, cond)) buffs.push(toBuff(e, e.kind, v));
+      if (v && v.value !== 0 && v.turns === -1 && e.target === 'self' && isBuffKind(e.kind) && effectActive(e, cond)) buffs.push({ ...toBuff(e, e.kind, v), passive: true });
     }
     // CE and event bonus passives (Chaldea's activateExtraPassive / activateCE, at battle start).
     const start = [
@@ -487,7 +496,7 @@ export function initBattle(members: readonly TeamMember[], mc: CompactMC, mcLv: 
         continue;
       }
       if (e.kind === 'gainNp') gauge += v.value;
-      else if (isBuffKind(e.kind) && !castBlocked) buffs.push(toBuff(e, e.kind, v));
+      else if (isBuffKind(e.kind) && !castBlocked) buffs.push({ ...toBuff(e, e.kind, v), passive: true });
     }
     return {
       key: m.key, svt, lv: m.lv, npLv: m.npLv, skillLv: [...m.skillLv],
@@ -511,7 +520,7 @@ export function initBattle(members: readonly TeamMember[], mc: CompactMC, mcLv: 
         if (!e.onField) units[i] = { ...u, gauge: Math.min(gaugeCap(u.npLv), u.gauge + v.value) };
       } else if (isBuffKind(e.kind) && !castBlocked) {
         const b = toBuff(e, e.kind, v);
-        (u.buffs as Buff[]).push(e.onField ? { ...b, src: holder } : b);
+        (u.buffs as Buff[]).push(e.onField ? { ...b, src: holder, passive: true } : { ...b, passive: true });
       }
     });
   }

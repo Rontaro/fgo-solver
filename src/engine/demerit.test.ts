@@ -52,4 +52,16 @@ describe('demerits', () => {
     s = { ...s, enemies: fresh.enemies, field: fresh.field, reserve: fresh.reserve, npsFired: 0, front: s.front.map((u) => (u ? { ...u, gauge: 10000 } : u)) };
     expect(() => fireNp(s, 'a')).toThrow(/would die/);
   });
+  it('clearBuffs removes the positive buffs from skills, not the passive ones nor the demerits', () => {
+    const svt = withS1({ kind: 'atkUp', target: 'self', lv: lv(300, 3) }, { kind: 'atkUp', target: 'self', lv: lv(-100, 3) });
+    let s = useSkill(start(svt), 'a', 1);
+    const passives = unit(s).buffs.filter((b) => b.passive).length;
+    expect(unit(s).buffs.some((b) => b.value === 300)).toBe(true);
+    const clear = { ...svt, skills: svt.skills.map((k) => (k.num === 2 ? { ...k, effects: [{ kind: 'clearBuffs' as const, target: 'self' as const, lv: lv(1, -1) }], unsupported: undefined } : k)) };
+    s = { ...s, front: s.front.map((u) => (u ? { ...u, svt: clear } : u)) };
+    s = useSkill(s, 'a', 2);
+    expect(unit(s).buffs.some((b) => b.value === 300)).toBe(false);
+    expect(unit(s).buffs.some((b) => b.value === -100)).toBe(true);
+    expect(unit(s).buffs.filter((b) => b.passive).length).toBe(passives);
+  });
 });
