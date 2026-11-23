@@ -708,7 +708,8 @@ function npOf(svt: any, servantLevel: string[], base: ConvOpts, report?: PartDro
   // Variants computed at their base rate (Chaldea damage.dart: specific attack
   // rate 1000 unless a condition holds): damageNpStateIndividualFix (vs an
   // enemy in some state: burn, charm... we do not track), damageNpRare (vs
-  // enemies of some rarity), damageNpHpratioLow (more damage the lower the
+  // enemies of some rarity: exact through NoblePhantasm.rare when the quest
+  // gives the enemy's rarity), damageNpHpratioLow (more damage the lower the
   // servant's HP: ours never drops, HP loss is not modelled). Under-estimates.
   const BASE_RATE: Record<string, string[]> = {
     damageNpStateIndividualFix: ['Target', 'Correction', 'IncludeIgnoreIndividuality'],
@@ -723,6 +724,16 @@ function npOf(svt: any, servantLevel: string[], base: ConvOpts, report?: PartDro
   const strip = (v: any) => { const o = { ...v }; for (const k of keys) delete o[k]; return o; };
   const bare = { ...dmg, svals: dmg.svals.map(strip), ...Object.fromEntries(OC_SVALS.filter((k) => dmg[k]).map((k) => [k, dmg[k].map(strip)])) };
   if (!plain(bare)) unsupported.push('cond:' + dmg.funcType);
+  let rare: NoblePhantasm['rare'];
+  if (dmg.funcType === 'damageNpRare') {
+    const all = ocs.flat();
+    const v0 = dmg.svals[0];
+    if (Array.isArray(v0.TargetRarityList) && all.every((v) => (v.Correction ?? 0) >= 1000
+      && JSON.stringify(v.TargetRarityList) === JSON.stringify(v0.TargetRarityList) && v.Target === v0.Target)) {
+      // Chaldea damage.dart: Target 1 counts the attacker, else the target enemy.
+      rare = { onEnemy: v0.Target !== 1, rarities: v0.TargetRarityList, mult: ocs.map((oc) => oc.map((v) => v.Correction)) };
+    }
+  }
   let sum: NoblePhantasm['sum'];
   if (isSum) {
     const all = ocs.flat();
@@ -752,6 +763,7 @@ function npOf(svt: any, servantLevel: string[], base: ConvOpts, report?: PartDro
     seMult: se ? ocs.map((oc) => oc.map((v) => v.Correction)) : undefined,
     seTraits: se ? [dmg.svals[0].Target] : undefined,
     ...(sum && { sum }),
+    ...(rare && { rare }),
     hits: np.npDistribution,
     npRate: np.npGain.np,
     extra,

@@ -17,6 +17,10 @@ import skadiRaw from '../../test/fixtures/jp-skadi.json';
 import castoriaRaw from '../../test/fixtures/jp-castoria.json';
 import kamaRaw from '../../test/fixtures/jp-kama-avenger.json';
 import sapphireRaw from '../../test/fixtures/jp-sapphire.json';
+import hijikataRaw from '../../test/fixtures/jp-hijikata.json';
+import bunyanRaw from '../../test/fixtures/jp-bunyan.json';
+import robertsRaw from '../../test/fixtures/jp-roberts.json';
+import triggerCacheJP from '../../data-cache/trigger-skills-JP.json';
 import questRaw from '../../test/fixtures/jp-quest-sky-caster.json';
 import { compactCE, compactServant } from '../data/compact';
 import { questFromAtlas, type RawQuest } from './quest';
@@ -138,5 +142,43 @@ describe('Chaldea battle_test.dart golden values (JP, quest 93000406/3)', () => 
     const r = shoot(s, 'kama');
     expect(r.dmg).toBe(82618);
     expect(r.gauge).toBeLessThanOrEqual(12422);
+  });
+});
+
+// function_executor_test.dart: NP damage variants on the same quest (target:
+// enemy slot 1 = index 0, a saber; Kaleidoscope lv 100 MLB; defaults NP5,
+// skills 10, 1000 ATK fou).
+describe('Chaldea function_executor_test.dart NP damage variants (JP, quest 93000406/3)', () => {
+  const triggers = new Map<number, any>(Object.entries((triggerCacheJP as any).skills)
+    .filter(([, v]) => v).map(([k, v]) => [Number(k), v]));
+  const at = (lv: number) => (svt: ReturnType<typeof compactServant>, key: string): TeamMember =>
+    member(svt, key, { lv, npLv: 5, fou: 1000, ce: kaleidoscope, ceLv: 100, ceMlb: true });
+  const npOn = (s: BattleState, key: string) => {
+    const r = fireNp(s, key);
+    return s.enemies.map((e, i) => e.hp - r.state.enemies[i].hp);
+  };
+
+  it('Hijikata (damageNpHpratioLow, NP 702502) at full HP: 107,144', () => {
+    const hijikata = compactServant(pin(hijikataRaw, {}, 702502), triggers);
+    expect(hijikata.np?.unsupported).toBeUndefined();
+    const s = initBattle([at(90)(hijikata, 'h')], mcCombat, 10, quest, constants);
+    expect(npOn(s, 'h')[0]).toBe(107144);
+  });
+
+  it('Paul Bunyan (damageNpIndividualSum on her own buffs): first NP 20,323', () => {
+    // PlayerSvtData.id defaults to the first NP of the group (1001301), not the upgraded one.
+    const bunyan = compactServant(pin(bunyanRaw, {}, 1001301), triggers);
+    expect(bunyan.unsupported).toEqual([]);
+    const s = initBattle([at(90)(bunyan, 'b')], mcCombat, 10, quest, constants);
+    expect(npOn(s, 'b')[0]).toBe(20323);
+  });
+
+  // damageNpRare: x Correction vs enemies of rarity 1-2; the three enemies
+  // here are rarity 2 (the caster also takes Rider's class advantage).
+  it('Bartholomew Roberts (damageNpRare) lv 60: 24,043 / 48,087 / 24,043', () => {
+    const roberts = compactServant(robertsRaw as any, triggers);
+    expect(roberts.np?.rare).toMatchObject({ onEnemy: true, rarities: [1, 2] });
+    const s = initBattle([at(60)(roberts, 'r')], mcCombat, 10, quest, constants);
+    expect(npOn(s, 'r')).toEqual([24043, 48087, 24043]);
   });
 });

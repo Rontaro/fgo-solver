@@ -49,6 +49,8 @@ export interface Unit {
 export interface Enemy {
   readonly hp: number; readonly className: string; readonly attribute: string;
   readonly traits: readonly number[]; readonly tdRate: number;
+  /** Rarity of the enemy's servant (damageNpRare), when the quest data has it. */
+  readonly rarity?: number;
   /** Defence up from its passives (permille, upDefence), and flat damage cut (subSelfdamage). */
   readonly defUp?: number; readonly dmgCut?: number;
   /**

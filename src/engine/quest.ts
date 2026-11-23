@@ -10,7 +10,7 @@ export interface RawFunc {
 export interface RawSkill { name?: string; functions: readonly RawFunc[]; }
 export interface RawEnemy {
   deck: string; deckId: number; name: string; hp: number;
-  svt: { className: string; attribute: string };
+  svt: { className: string; attribute: string; rarity?: number };
   traits: readonly { id: number }[];
   serverMod: { tdRate: number };
   /** Active skills: never used (enemies never act), not checked. */
@@ -231,6 +231,7 @@ export function questFromAtlas(raw: RawQuest): Quest {
       return {
         hp: e.hp, className: e.svt.className, attribute: e.svt.attribute,
         traits: e.traits.map((t) => t.id), tdRate: e.serverMod.tdRate,
+        ...(typeof e.svt.rarity === 'number' && { rarity: e.svt.rarity }),
         ...(defUp > 0 && { defUp }), ...(dmgCut > 0 && { dmgCut }),
         ...((own[i].noDebuff || side.noDebuff) && { noDebuff: true as const }),
       };

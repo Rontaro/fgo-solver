@@ -141,6 +141,12 @@ export interface NoblePhantasm {
    * [ocLv-1][npLv-1], permille.
    */
   sum?: { onEnemy: boolean; traits: number[]; base: number[][]; step: number[][]; max: number };
+  /**
+   * damageNpRare: specific rate `mult` when the rarity of the target enemy
+   * (onEnemy) or of the servant is in `rarities`, else 1000. [ocLv-1][npLv-1].
+   * An enemy of unknown rarity gets 1000 (an under-estimate).
+   */
+  rare?: { onEnemy: boolean; rarities: number[]; mult: number[][] };
   hits: number[];          // npDistribution
   npRate: number[];        // npGain.np per npLv
   extra: Effect[];         // non-damage effects of the NP

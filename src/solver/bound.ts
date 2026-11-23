@@ -183,7 +183,7 @@ export function damageBound(s: BattleState, c: BoundCtx): BoundFail | null {
         const k = Math.min(5000, 1000 + rate) / 1000;
         const up = (v: number) => (rate > 0 && v > 0 ? v * k : v);
         const m = { atkMod: up(m0.atkMod), cardMod: up(m0.cardMod), npDmgMod: up(m0.npDmgMod), powerMod: up(m0.powerMod), dmgPlus: up(m0.dmgPlus) };
-        const se = specificRate(np, u.svt.traits, en, (tab) => maxRow(tab, u.npLv));
+        const se = specificRate(np, u.svt.traits, en, (tab) => maxRow(tab, u.npLv), u.svt.rarity);
         sums[i].push(npDamage({
           atk: u.atk, mult, card: np.card, cardMod: m.cardMod + deb[i].res, classAtk: a.classAtk, triangle: bestTriangle(u, en, a.triangle, pool),
           attribute: a.attribute, atkMod: m.atkMod, defMod: (en.defUp ?? 0) - deb[i].def, npDmgMod: m.npDmgMod, powerMod: m.powerMod,

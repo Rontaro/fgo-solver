@@ -13,8 +13,13 @@ const extraVal = (e: Effect, ocLv: number, npLv: number): LevelVal => (e.oc ? e.
  * NoblePhantasm.sum). pick reads a [ocLv-1][npLv-1] table (the engine: the
  * fired OC; the bound: the best OC).
  */
-export function specificRate(np: NoblePhantasm, selfTraits: readonly number[], enemy: Pick<Enemy, 'traits'>, pick: (t: number[][]) => number): number {
+export function specificRate(np: NoblePhantasm, selfTraits: readonly number[], enemy: Pick<Enemy, 'traits' | 'rarity'>, pick: (t: number[][]) => number,
+  selfRarity?: number): number {
   if (np.seTraits && np.seMult && np.seTraits.some((tr) => enemy.traits.includes(tr))) return pick(np.seMult);
+  if (np.rare) {
+    const r = np.rare.onEnemy ? enemy.rarity : selfRarity;
+    if (r !== undefined && np.rare.rarities.includes(r)) return pick(np.rare.mult);
+  }
   if (np.sum) {
     const own = np.sum.onEnemy ? enemy.traits : selfTraits;
     let n = np.sum.traits.filter((t) => own.includes(t)).length;
@@ -104,7 +109,7 @@ export function fireNp(state: BattleState, unitKey: string, targetIndex?: number
     const m = { ...m0, cardMod: m0.cardMod + debuffSum(t, 'cardResDown', np.card) };
     const defMod = (t.defUp ?? 0) - debuffSum(t, 'defDown', np.card);
     for (const b of u.buffs) if (b.count > 0 && buffApplies(b, t, np.card)) used.add(b);
-    const se = specificRate(np, u.svt.traits, t, (tab) => tab[ocLv - 1][npLv - 1]);
+    const se = specificRate(np, u.svt.traits, t, (tab) => tab[ocLv - 1][npLv - 1], u.svt.rarity);
     const damage = npDamage({
       atk: u.atk, mult, card: np.card, cardMod: m.cardMod,
       classAtk: a.classAtk, triangle: triangleOf(u, t, a.triangle), attribute: a.attribute,
