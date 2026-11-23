@@ -207,6 +207,7 @@ export const it: Messages = {
     missingDamage: (wave, pct) => `Arrivato alla wave ${wave}: manca almeno il ${pct}% di danno (stima ottimistica). Nessuna linea reale entro il 10% trovata nel tempo massimo: con più tempo può comparire la più vicina.`,
     npNotCharged: (wave) => `Arrivato alla wave ${wave}: NP non carico.`,
     showText: 'mostra testo',
+    sortByBonus: 'ordina per bonus evento (oggetti in più per drop)',
     eventCeHint: 'Questo nodo ha CE con bonus evento che non stai usando (sceglili in uno slot CE):',
     closestTitle: (pct: string) => `Linea più vicina: resta il ${pct}% degli HP di un nemico dopo l'ultimo NP`,
     closestNote: "Non è un 3T: le carte giocate dopo l'NP possono chiudere l'ondata, ma niente lo garantisce (carte pescate, roll del danno).",

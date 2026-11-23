@@ -208,6 +208,7 @@ export const en = {
     missingDamage: (wave: number, pct: string) => `Reached wave ${wave}: at least ${pct}% damage short (an optimistic estimate). No real line within 10% was found in the time limit: a longer max time may show the closest one.`,
     npNotCharged: (wave: number) => `Reached wave ${wave}: NP not charged.`,
     showText: 'show text',
+    sortByBonus: 'sort by event bonus (extra items per drop)',
     eventCeHint: 'This node has event bonus CEs you are not using (pick them in a CE slot):',
     closestTitle: (pct: string) => `Closest line: ${pct}% of an enemy's HP left after the last NP`,
     closestNote: 'Not a 3T: the face cards played after the NP may finish the wave, but nothing guarantees it (card draw, damage roll).',

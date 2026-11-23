@@ -107,6 +107,14 @@ export interface Effect {
  */
 export interface Deferred { at: 'delay' | 'turnEnd'; turns: number; }
 
+/**
+ * An event bonus of a CE or a servant (Atlas eventDropUp & co.): in quests of
+ * that event, `value` more of the item with trait `item` per drop ('drop'),
+ * or that much more in permille ('dropRate'), or more event points ('point',
+ * 'pointRate'). item 0 = not tied to one item.
+ */
+export interface EventBonus { eventId: number; item: number; kind: 'drop' | 'dropRate' | 'point' | 'pointRate'; value: number }
+
 /** Event bonus passive (Atlas extraPassive): active only in quests of these events. */
 export interface EventPassive { eventIds: number[]; effects: Effect[]; }
 
@@ -179,6 +187,8 @@ export interface CompactServant {
    * engine drops every buff such a unit casts (CompactServant traits, any-of).
    */
   castBlockTraits?: number[];
+  /** Event drop / point bonuses of its event passives (no condition), omitted when none. */
+  eventBonus?: EventBonus[];
   /** HP by level (Atlas hpGrowth), only for servants with a lossHp effect. */
   hp?: number[];
   /**
@@ -209,7 +219,13 @@ export interface CompactCE {
   effects: Effect[];
   effectsMlb: Effect[];
   unsupported: string[];
+  /** Event drop / point bonuses (base / MLB), omitted when none. */
+  bonus?: EventBonus[];
+  bonusMlb?: EventBonus[];
 }
+
+/** Name and icon of the event items referenced by EventBonus.item (items.json, by trait). */
+export type EventItems = Record<string, { name: string; icon: string }>;
 
 export interface CompactMC { id: number; name: string; skills: Skill[]; unsupported: string[]; }
 

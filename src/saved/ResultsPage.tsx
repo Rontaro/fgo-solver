@@ -6,6 +6,7 @@ import { describeTurns } from '../solverui/members';
 import type { SolverLoad } from '../solverui/SolverPage';
 import { emptySlot, type SlotState } from '../solverui/TeamBuilder';
 import { MarginBars, TurnSteps } from '../solverui/TurnSteps';
+import { BonusChips, teamBonus } from '../solverui/eventBonus';
 import { useT } from '../i18n';
 import { download, parseResults } from './io';
 import { loadResults, newId, saveResults, type SavedResult } from './store';
@@ -60,6 +61,7 @@ function ResultCard({ r, onLoad, onRename, onDelete }: {
         {mc && <span>{mc.name}</span>}
         <span>{t.actions(r.actions)}{r.usesSwap ? t.orderChange : ''}</span>
         {r.margins && <MarginBars margins={r.margins} />}
+        {team && <BonusChips lines={teamBonus(team, r.quest.eventId)} items={data.items} />}
       </div>
       {outdated && (
         <p className="text-xs text-amber-200">

@@ -11,6 +11,7 @@ import type { InMsg, OutMsg, Progress } from '../solver/worker-handler';
 import { defaultMc, describeTurns, formatTurns, ownedToMember, slotEnemyNames, supportMember, SUPPORT_POOL_CAP, type CeChoice } from './members';
 import { QuestPicker, type PickedQuest, type QuestPreset } from './QuestPicker';
 import { eventCesFor } from './eventCes';
+import { BonusChips, dropTotal, teamBonus } from './eventBonus';
 import { addResult, addTeam, type SavedQuest } from '../saved/store';
 import { dataVersionOf, toSavedMember } from '../saved/verify';
 import { emptySlot, TeamBuilder, type SlotState } from './TeamBuilder';
@@ -54,6 +55,7 @@ export function SolverPage({ load }: { load?: SolverLoad | null }) {
   const [error, setError] = useState<{ message: string; reasons?: readonly string[] } | null>(null);
   const [run, setRun] = useState<Run | null>(null);
   const [showText, setShowText] = useState(false);
+  const [byBonus, setByBonus] = useState(false);
   const worker = useRef<Worker | null>(null);
   const jobId = useRef(0);
   const members = useRef(new Map<string, TeamMember>());
@@ -104,6 +106,17 @@ export function SolverPage({ load }: { load?: SolverLoad | null }) {
     : slots.some((s) => s.kind === 'list' && !(s.list ?? []).length) ? t.emptyList
     : !isAuto && keys.length === 0 ? t.emptyTeam
     : null;
+
+  // Event bonus of each solution's party (event drop / point bonuses of the node's event).
+  const withBonus = run ? found.map((f, i) => {
+    const keysOf = f.team ?? [...run.front, ...run.back];
+    const ms = keysOf.flatMap((k) => { const m = members.current.get(k); return m ? [m] : []; });
+    return { f, i, bonus: teamBonus(ms, run.q.eventId) };
+  }) : [];
+  const hasBonus = withBonus.some((x) => x.bonus.length > 0);
+  const shown = (byBonus && hasBonus
+    ? [...withBonus].sort((a, b) => dropTotal(b.bonus) - dropTotal(a.bonus) || compareSolutions(a.f.solution, b.f.solution))
+    : withBonus.filter((x) => sorted.includes(x.f)).sort((a, b) => compareSolutions(a.f.solution, b.f.solution))).slice(0, MAX_SHOWN);
 
   const name = (k: string | undefined) => (k ? members.current.get(k)?.svt.name ?? k : '?');
   const unit = (k: string | undefined) => (k ? members.current.get(k) : undefined);
@@ -270,17 +283,27 @@ export function SolverPage({ load }: { load?: SolverLoad | null }) {
           </div>
         )}
         {run && sorted.length > 0 && (
-          <label className="flex items-center gap-2 text-xs text-night-400">
-            <input type="checkbox" checked={showText} onChange={(e) => setShowText(e.target.checked)} /> {t.showText}
-          </label>
+          <div className="flex flex-wrap items-center gap-4 text-xs text-night-400">
+            <label className="flex items-center gap-2">
+              <input type="checkbox" checked={showText} onChange={(e) => setShowText(e.target.checked)} /> {t.showText}
+            </label>
+            {hasBonus && (
+              <label className="flex items-center gap-2 text-gold-300">
+                <input type="checkbox" checked={byBonus} onChange={(e) => setByBonus(e.target.checked)} /> {t.sortByBonus}
+              </label>
+            )}
+          </div>
         )}
-        {run && sorted.map((f, i) => {
+        {run && shown.map(({ f, i, bonus }) => {
           const tk = f.team ?? [...run.front, ...run.back];
           const front = f.team ? tk.slice(0, 3) : run.front, back = f.team ? tk.slice(3) : run.back;
           return (
             <div key={i} className="space-y-3 rounded-lg border border-gold-500/25 bg-night-950/60 p-4 text-sm">
               <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-night-400">
-                <span>{t.actions(f.solution.actions)}{f.solution.usesSwap ? t.orderChange : ''}</span>
+                <span className="flex flex-wrap items-center gap-2">
+                  <span>{t.actions(f.solution.actions)}{f.solution.usesSwap ? t.orderChange : ''}</span>
+                  <BonusChips lines={bonus} items={data.items} />
+                </span>
                 <span className="flex items-center gap-3">
                   <MarginBars margins={f.solution.margins} />
                   {saveBtn(`s${i}`, () => saveResult(`s${i}`, tk, [...front], [...back], { kind: 'solution', s: f.solution }))}

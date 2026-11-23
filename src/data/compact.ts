@@ -1,7 +1,7 @@
 // Explicit .ts: scripts/build-data.mjs loads this file with Node directly (type stripping).
 import { FORM_HIDES, formOfLimit, type FormHides } from './forms.ts';
 import type {
-  Card, Effect, EffectKind, TargetKind, Skill, NoblePhantasm,
+  EventBonus, Card, Effect, EffectKind, TargetKind, Skill, NoblePhantasm,
   CompactServant, CompactCE, CompactMC, LevelVal, EventPassive, Deferred, PartUnsupported,
 } from './types';
 
@@ -787,6 +787,44 @@ export function faceOf(faces: Record<string, string> | undefined): string {
  * a conditioned skill may be the one that wins on priority. Event-less extra
  * passives are campaign bonuses (Chaldea skips the limited ones): ignored.
  */
+const BONUS_KIND: Record<string, EventBonus['kind']> = {
+  eventDropUp: 'drop', eventDropRateUp: 'dropRate', eventPointUp: 'point', eventPointRateUp: 'pointRate',
+};
+/** Event bonuses of a list of functions (see EventBonus). */
+export function bonusesOf(funcs: readonly any[]): EventBonus[] {
+  const out: EventBonus[] = [];
+  for (const f of funcs) {
+    const kind = BONUS_KIND[f.funcType];
+    const v = f.svals?.[0];
+    if (!kind || !v?.EventId) continue;
+    const value = v.AddCount ?? v.RateCount ?? v.Value ?? 0;
+    if (value > 0) out.push({ eventId: v.EventId, item: v.Individuality ?? 0, kind, value });
+  }
+  return out;
+}
+
+/** Event bonuses of a servant's unconditioned event passives (same groups as eventPassivesOf). */
+function servantBonusesOf(svt: any): EventBonus[] {
+  const byEvent = new Map<number, { skills: any[]; ok: boolean }>();
+  for (const sk of svt.extraPassive ?? []) {
+    const eps: any[] = sk.extraPassive ?? [];
+    const first = eps[0]?.eventId ?? 0;
+    if (!first) continue;
+    const g = byEvent.get(first) ?? { skills: [], ok: true };
+    byEvent.set(first, g);
+    g.skills.push(sk);
+    if (eps.some((ep) => ep.condFriendshipRank || ep.condLimitCount || ep.condLv || ep.condQuestId || ep.releaseConditions?.length)) g.ok = false;
+  }
+  const out: EventBonus[] = [];
+  for (const g of byEvent.values()) {
+    if (!g.ok) continue;
+    let best: any = null;
+    for (const sk of g.skills) if (!best || (sk.extraPassive[0].priority ?? 0) > (best.extraPassive[0].priority ?? 0)) best = sk;
+    out.push(...bonusesOf(best.functions));
+  }
+  return out;
+}
+
 function eventPassivesOf(svt: any, unsupported: string[], base: ConvOpts): EventPassive[] {
   const byEvent = new Map<number, { skills: any[]; ok: boolean }>();
   for (const sk of svt.extraPassive ?? []) {
@@ -882,6 +920,7 @@ export function compactServant(svt: any, triggers?: TriggerLookup, report?: Part
     np,
     unsupported: uniq(unsupported),
     ...(castBlock.size && { castBlockTraits: [...castBlock] }),
+    ...((b) => (b.length ? { eventBonus: b } : {}))(servantBonusesOf(svt)),
     ...(losesHp && Array.isArray(svt.hpGrowth) && { hp: svt.hpGrowth }),
     ...(forms && { forms }),
   };
@@ -930,6 +969,10 @@ export function compactCE(ce: any, triggers?: TriggerLookup, report?: PartDrops[
     effects: conv(false, dropsBase), effectsMlb: conv(true, dropsMlb),
     unsupported: [...new Set(unsupported)],
   };
+  const bonusOf = (mlb: boolean) => bonusesOf(nums.flatMap((num) => group(num, mlb).flatMap((s: any) => s.functions)));
+  const bonus = bonusOf(false), bonusMlb = bonusOf(true);
+  if (bonus.length) out.bonus = bonus;
+  if (bonusMlb.length) out.bonusMlb = bonusMlb;
   if (dropsBase.length) report?.push({ part: 'ce', drops: uniq(dropsBase) });
   if (dropsMlb.length) report?.push({ part: 'ceMlb', drops: uniq(dropsMlb) });
   return out;

@@ -180,6 +180,17 @@ async function buildRegion(region) {
   const mcs = rawMcs.map((m) => compactMC(m, triggers));
   await write('mcs.json', mcs);
 
+  // Event items referenced by the event bonuses (trait -> name, icon).
+  const traits = new Set([...ces.flatMap((c) => [...(c.bonus ?? []), ...(c.bonusMlb ?? [])]), ...servants.flatMap((s) => s.eventBonus ?? [])]
+    .map((b) => b.item).filter(Boolean));
+  const items = {};
+  for (const it of await get(`/export/${region}/nice_item.json`)) {
+    for (const t of it.individuality ?? []) {
+      if (traits.has(t.id) && !items[t.id]) items[t.id] = { name: it.name, icon: it.icon };
+    }
+  }
+  await write('items.json', items);
+
   console.log(`[${region}] constants`);
   // classAtk from NiceClass.attackRate; missing classRel pairs filled through
   // relationId (see src/data/constants.ts).

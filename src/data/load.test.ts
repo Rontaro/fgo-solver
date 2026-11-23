@@ -15,6 +15,7 @@ function files(hash: string, names: string[]): Record<string, unknown> {
     'ces.json': [], 'mcs.json': [],
     'constants.json': { classAtk: {}, classRel: {}, attrRel: {} },
     'quests.json': [],
+    'items.json': {},
   };
 }
 
@@ -41,7 +42,7 @@ describe('loadRegionData', () => {
     expect(d.stale).toBe(false);
     expect(d.version.hash).toBe('h1');
     expect(d.servants.get(2)?.name).toBe('Artoria');
-    expect(calls).toHaveLength(6);
+    expect(calls).toHaveLength(7); // version + servants, ces, mcs, constants, quests, items
   });
 
   it('uses the cache when the version hash is unchanged', async () => {
