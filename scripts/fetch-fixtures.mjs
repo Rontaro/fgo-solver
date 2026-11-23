@@ -28,6 +28,7 @@ const files = {
   'jp-hijikata.json': '/nice/JP/servant/702500?lore=false',
   'jp-bunyan.json': '/nice/JP/servant/1001300?lore=false',
   'jp-roberts.json': '/nice/JP/servant/403400?lore=false',
+  'jp-musashi.json': '/nice/JP/servant/101700?lore=false',
   'jp-quest-sky-caster.json': '/nice/JP/quest/93000406/3?lore=false',
   // Skills run by trigger buffs (build-data resolves them the same way).
   'skill-966533.json': '/nice/NA/skill/966533',

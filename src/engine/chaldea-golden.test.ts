@@ -20,6 +20,7 @@ import sapphireRaw from '../../test/fixtures/jp-sapphire.json';
 import hijikataRaw from '../../test/fixtures/jp-hijikata.json';
 import bunyanRaw from '../../test/fixtures/jp-bunyan.json';
 import robertsRaw from '../../test/fixtures/jp-roberts.json';
+import musashiRaw from '../../test/fixtures/jp-musashi.json';
 import triggerCacheJP from '../../data-cache/trigger-skills-JP.json';
 import questRaw from '../../test/fixtures/jp-quest-sky-caster.json';
 import { compactCE, compactServant } from '../data/compact';
@@ -171,6 +172,21 @@ describe('Chaldea function_executor_test.dart NP damage variants (JP, quest 9300
     expect(bunyan.unsupported).toEqual([]);
     const s = initBattle([at(90)(bunyan, 'b')], mcCombat, 10, quest, constants);
     expect(npOn(s, 'b')[0]).toBe(20323);
+  });
+
+  // battle_test.dart "Musashi NP always super effective bug": NP 101703
+  // (setNpStrengthenLv(3)), damageNpIndividualSum on the target's traits
+  // 109 / 115: 1500 when it has any (Correction 0: no more per extra trait).
+  it('Musashi (damageNpIndividualSum on the enemy): 80,119; x1.5 vs trait 109, the same with both', () => {
+    const musashi = compactServant(pin(musashiRaw, {}, 101703), triggers);
+    expect(musashi.np?.sum).toMatchObject({ onEnemy: true, traits: [109, 115] });
+    const withTraits = (extra: number[]): BattleState => {
+      const s = initBattle([at(90)(musashi, 'm')], mcCombat, 10, quest, constants);
+      return { ...s, enemies: s.enemies.map((e, i) => (i === 0 ? { ...e, traits: [...e.traits, ...extra] } : e)) };
+    };
+    expect(npOn(withTraits([]), 'm')[0]).toBe(80119);
+    expect(npOn(withTraits([109]), 'm')[0]).toBe(120179);
+    expect(npOn(withTraits([115, 109]), 'm')[0]).toBe(120179);
   });
 
   // damageNpRare: x Correction vs enemies of rarity 1-2; the three enemies
