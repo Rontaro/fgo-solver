@@ -153,7 +153,7 @@ export const it: Messages = {
     supportStats: (lv, np, sk) => `lv ${lv} · NP${np} · ${sk}`,
     defaults: 'valori di default',
     defaultsTitle: 'Ha ancora i valori di default (lv 90, NP1, 10/10/10, niente append, niente fou): inserisci quelli veri nel tab Roster.',
-    notExhaustive: 'Con gli slot "Libero" il solver prova molte squadre entro il tempo massimo, quindi la ricerca non è esaustiva: non trovare nulla non prova che non ci sia una soluzione.',
+    notExhaustive: 'Con gli slot "Libero" o "Da una lista" il solver prova più squadre entro il tempo massimo: se la ricerca non risulta completa, non trovare nulla non prova che non ci sia una soluzione.',
   },
   picker: {
     tabRoster: 'Il mio roster',

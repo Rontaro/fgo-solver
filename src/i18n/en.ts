@@ -154,7 +154,7 @@ export const en = {
     supportStats: (lv: number, np: number, sk: string) => `lv ${lv} · NP${np} · ${sk}`,
     defaults: 'default values',
     defaultsTitle: 'Still the manual defaults (lv 90, NP1, 10/10/10, no append, no fou): set the real values in the Roster tab.',
-    notExhaustive: 'With "Any" slots the solver tries many teams within the time limit, so the search is not exhaustive: finding nothing does not prove there is no solution.',
+    notExhaustive: 'With "Any" or "From a list" slots the solver tries several teams within the time limit: unless the search reports it is complete, finding nothing does not prove there is no solution.',
   },
   picker: {
     tabRoster: 'My roster',
