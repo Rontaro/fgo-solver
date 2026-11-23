@@ -68,6 +68,8 @@ const IGNORED_BUFFS_ALLY = new Set([
   'addIndividuality',
   // Ignore enemy DEF buffs: enemies have none in the model; only helps.
   'pierceDefence',
+  // Hit through special invincibility: only helps.
+  'pierceSpecialInvincible',
   // Crit damage taken / star absorption / instant-death odds and resist /
   // debuff resist down (demerit): crits, stars, enemy debuffs and death are out
   // of the model.
@@ -109,6 +111,8 @@ const IGNORED_BUFFS_ENEMY = new Set([
   'avoidState',
   // Flat damage received up on the enemy (Melusine's NP): extra damage we do not count.
   'addSelfdamage',
+  // Enemy attack / crit damage up or down: enemies never attack in the model.
+  'upAtk', 'downCriticaldamage',
 ]);
 const IGNORED_FUNCS_ALLY = new Set([
   'gainStar', 'gainHp', 'gainHpPer', 'none',
@@ -139,6 +143,8 @@ const IGNORED_FUNCS_ENEMY = new Set([
   'hastenNpturn', 'delayNpturn', 'absorbNpturn', 'instantDeath', 'gainHpFromTargets', 'subState', 'none',
   // Drains the enemy charge bar (lossNp on an enemy is charge, not our gauge).
   'lossNp', 'displayBuffstring',
+  // Fills the enemy charge bar: enemies never act in the model (they die on our turn).
+  'gainNp',
 ]);
 // subState on an ally is safe only when it removes nothing we model:
 // debuffs (buffNegativeEffect, the DoT families poison / burn / curse, mental
@@ -316,6 +322,8 @@ function classify(f: any, ctx: Ctx = { depth: 0, flip: false }): Class {
   // Immediate NP loss on our side (a skill / NP demerit).
   if (side === 'ally' && ctx.depth === 0 && !ctx.flip && f.funcType === 'lossNp') return { cls: 'apply', kind: 'lossNp', demerit: true };
   if (side === 'ally' && f.funcType === 'gainNpBuffIndividualSum') return { cls: 'ignore', drop: 'func:gainNpBuffIndividualSum' };
+  // More NP or HP for us (drained from the enemies, or per trait count): not modelled, dropped.
+  if (side === 'ally' && ['gainNpFromTargets', 'gainHpFromTargets', 'gainNpIndividualSum'].includes(f.funcType)) return { cls: 'ignore', drop: 'func:' + f.funcType };
   if (side === 'ally' && f.funcType === 'subState') {
     const tv: number[] = (f.traitVals ?? []).map((t: any) => t.id);
     if (tv.length && tv.every((id) => DEBUFF_TRAITS.has(id))) return { cls: 'ignore' };

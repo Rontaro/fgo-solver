@@ -124,7 +124,9 @@ describe('convertFunctions', () => {
     expect(run([buff('downDefence', 'enemy')]).out).toEqual([{ kind: 'defDown', target: 'enemy', lv: [{ value: 200, turns: 3, count: -1 }] }]);
     // A self stun is a modelled demerit (EffectKind stun), certain, value 1.
     expect(run([buff('donotAct', 'self')]).out).toEqual([{ kind: 'stun', target: 'self', lv: [{ value: 1, turns: 3, count: -1 }] }]);
-    expect(run([buff('upAtk', 'enemy')]).unsupported).toEqual(['buff:upAtk@enemy']);
+    expect(run([buff('specialInvincible', 'enemy')]).unsupported).toEqual(['buff:specialInvincible@enemy']);
+    // Enemy ATK up only matters when it attacks: never in the model.
+    expect(run([buff('upAtk', 'enemy')])).toEqual({ out: [], unsupported: [] });
   });
   const ignored = (f: any) => expect(run([f])).toEqual({ out: [], unsupported: [] });
   it('enemy debuffs: card conditions kept, any other condition drops them', () => {
