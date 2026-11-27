@@ -35,8 +35,17 @@ export type EffectKind =
   // overwriteClassRelation, attack side, overwriteForce): Effect.classRel.
   | 'classRel'
   // The holder switches form (Atlas transformServant on itself, Melusine /
-  // Ptolemaios): Effect.toForm, see data/forms.ts.
+  // Ptolemaios, or into its other servant id, Aoko): Effect.toForm, see
+  // data/forms.ts.
   | 'transform'
+  // A buff that only carries traits (Effect.buffTraits), counted by a
+  // damageNpIndividualSum on the holder's own buffs (NoblePhantasm.sum.buffs):
+  // Aoko's Magic Bullets (Atlas addIndividuality). At most Effect.stackMax of
+  // them on a unit (Atlas SameBuffLimitNum).
+  | 'traitBuff'
+  // Removes up to `value` traitBuffs of the holder having one of
+  // Effect.buffTraits (Atlas subState: Aoko's NP expends 10 bullets). A demerit.
+  | 'removeTraitBuffs'
   // Removes the holder's removable positive buffs (Atlas subState of
   // buffPositiveEffect on our side, Hassan of the Hundred Personas S3): a
   // demerit. Passive / CE buffs (battle start) cannot be removed.
@@ -74,6 +83,8 @@ export interface Effect {
    * can target (only the ones in compact.ts RATE_TRAITS, to keep the data small).
    */
   buffTraits?: number[];
+  /** traitBuff: the most a unit can hold of buffs with these traits. */
+  stackMax?: number;
   /**
    * CE / event passive effects only: the effect applies only to a unit with
    * one of these fixed traits (Atlas functvals on the function, or the buff
@@ -152,16 +163,23 @@ export interface NoblePhantasm {
    * damageNpIndividualSum: specific rate = base + count * step (capped at max
    * counts when max > 0) when count > 0, else 1000. count = traits of the
    * target enemy (onEnemy) or of the servant in `traits`; we count only their
-   * fixed traits (not buffs), a lower bound (base >= 1000, step >= 0).
+   * fixed traits, a lower bound (base >= 1000, step >= 0), plus with `buffs`
+   * the holder's traitBuffs having one of them (Aoko's bullets).
    * [ocLv-1][npLv-1], permille.
    */
-  sum?: { onEnemy: boolean; traits: number[]; base: number[][]; step: number[][]; max: number };
+  sum?: { onEnemy: boolean; traits: number[]; base: number[][]; step: number[][]; max: number; buffs?: true };
   /**
    * damageNpRare: specific rate `mult` when the rarity of the target enemy
    * (onEnemy) or of the servant is in `rarities`, else 1000. [ocLv-1][npLv-1].
    * An enemy of unknown rarity gets 1000 (an under-estimate).
    */
   rare?: { onEnemy: boolean; rarities: number[]; mult: number[][] };
+  /**
+   * An NP with no damage that we still fire for its effects (Aoko's base NP
+   * transforms her): mult is all 0, no target, no refund; it counts for the
+   * chain overcharge like any NP card.
+   */
+  noDamage?: true;
   hits: number[];          // npDistribution
   npRate: number[];        // npGain.np per npLv
   extra: Effect[];         // non-damage effects of the NP
@@ -202,9 +220,16 @@ export interface CompactServant {
    * Both kits of a servant with forms (data/forms.ts); the top-level skills /
    * NP are the 'high' one. A form view (inForm) sets form and formBase.
    */
-  forms?: Record<'low' | 'high', { skills: Skill[]; np: NoblePhantasm | null }>;
+  forms?: Record<'low' | 'high', { skills: Skill[]; np: NoblePhantasm | null; atkGrowth?: number[]; traits?: number[]; attribute?: string }>;
+  /**
+   * The form this object is: set on a form view, and on a top level that is
+   * the 'low' form (Aoko: her base servant; the 'high' one is the servant she
+   * transforms into, with its own ATK, traits and attribute).
+   */
   form?: 'low' | 'high';
   formBase?: CompactServant;
+  /** Always starts in its top-level form (the other one is only reached by transforming). */
+  formLocked?: true;
 }
 
 /**

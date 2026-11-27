@@ -156,16 +156,21 @@ async function buildRegion(region) {
   if (!info) throw new Error(`/info has no entry for ${region}`);
 
   console.log(`[${region}] servants, craft essences, mystic codes`);
-  const rawServants = (await get(`/export/${region}/nice_servant.json`))
-    .filter((s) => (s.type === 'normal' || s.type === 'heroine') && s.collectionNo > 0);
+  const allServants = await get(`/export/${region}/nice_servant.json`);
+  const rawServants = allServants.filter((s) => (s.type === 'normal' || s.type === 'heroine') && s.collectionNo > 0);
+  // Servants a transformServant leads to (Aoko's other id, collectionNo 0): compactServant embeds their kit.
+  const byId = new Map(allServants.map((s) => [s.id, s]));
+  const targetIds = new Set(rawServants.flatMap((s) => [...s.skills, ...s.noblePhantasms].flatMap((g) => g.functions)
+    .filter((f) => f.funcType === 'transformServant').flatMap((f) => (f.svals ?? []).map((v) => v.Value))));
+  const transformTargets = [...targetIds].map((id) => byId.get(id)).filter((s) => s && s.collectionNo === 0);
   const rawCes = (await get(`/export/${region}/nice_equip.json`)).filter((e) => e.type === 'servantEquip');
   const rawMcs = await get(`/export/${region}/nice_mystic_code.json`);
-  const triggers = await triggerLookup(region, info.hash, [...rawServants, ...rawCes, ...rawMcs]);
+  const triggers = await triggerLookup(region, info.hash, [...rawServants, ...transformTargets, ...rawCes, ...rawMcs]);
 
   const dropped = [];
   const servants = rawServants.map((s) => {
     const parts = [];
-    const c = compactServant(s, triggers, parts);
+    const c = compactServant(s, triggers, parts, byId);
     if (parts.length) dropped.push(dropEntry('servant', c, parts));
     return c;
   });

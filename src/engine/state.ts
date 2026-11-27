@@ -1,4 +1,4 @@
-import { inForm } from '../data/forms';
+import { formOf, inForm } from '../data/forms';
 import type { CompactServant, CompactCE, CompactMC, Constants, Effect, EffectKind, LevelVal, Card } from '../data/types';
 
 /*
@@ -8,7 +8,7 @@ import type { CompactServant, CompactCE, CompactMC, Constants, Effect, EffectKin
  * table are shared between states, so cloning is cheap for the solver.
  */
 
-export type BuffKind = Extract<EffectKind, 'atkUp' | 'cardUp' | 'npDmgUp' | 'powerUp' | 'npGainUp' | 'ocUp' | 'dmgPlus' | 'buffRate' | 'sealNp' | 'sealSkill' | 'stun' | 'classRel'>;
+export type BuffKind = Extract<EffectKind, 'atkUp' | 'cardUp' | 'npDmgUp' | 'powerUp' | 'npGainUp' | 'ocUp' | 'dmgPlus' | 'buffRate' | 'sealNp' | 'sealSkill' | 'stun' | 'classRel' | 'traitBuff'>;
 export interface Buff {
   readonly kind: BuffKind; readonly value: number; readonly turns: number; readonly count: number;
   readonly cards?: readonly Card[]; readonly opTraits?: readonly number[];
@@ -290,12 +290,12 @@ export const canSkill = (u: Unit): boolean => !u.buffs.some((b) => b.kind === 's
 export const isHarmful = (e: Effect): boolean =>
   // classRel may lower a relation (Semiramis: Assassin vs Caster x1): harmful-capable.
   // transform may be worse (an AoE NP on a single boss): never forced either.
-  (e.kind === 'lossNp' && !e.deferred) || e.kind === 'lossHp' || e.kind === 'selfDeath' || e.kind === 'allyDeath' || e.kind === 'classRel' || e.kind === 'transform' || e.kind === 'clearBuffs' || CONTROL.has(e.kind) || e.lv.some((v) => v.value < 0);
-const MOD_FIELD: Record<Exclude<BuffKind, 'buffRate' | 'sealNp' | 'sealSkill' | 'stun' | 'classRel'>, keyof Mods> = {
+  (e.kind === 'lossNp' && !e.deferred) || e.kind === 'lossHp' || e.kind === 'selfDeath' || e.kind === 'allyDeath' || e.kind === 'classRel' || e.kind === 'transform' || e.kind === 'clearBuffs' || e.kind === 'removeTraitBuffs' || CONTROL.has(e.kind) || e.lv.some((v) => v.value < 0);
+const MOD_FIELD: Record<Exclude<BuffKind, 'buffRate' | 'sealNp' | 'sealSkill' | 'stun' | 'classRel' | 'traitBuff'>, keyof Mods> = {
   atkUp: 'atkMod', cardUp: 'cardMod', npDmgUp: 'npDmgMod', powerUp: 'powerMod',
   npGainUp: 'npGainMod', ocUp: 'ocUp', dmgPlus: 'dmgPlus',
 };
-export const isBuffKind = (k: EffectKind): k is BuffKind => k in MOD_FIELD || k === 'buffRate' || k === 'classRel' || CONTROL.has(k);
+export const isBuffKind = (k: EffectKind): k is BuffKind => k in MOD_FIELD || k === 'buffRate' || k === 'classRel' || k === 'traitBuff' || CONTROL.has(k);
 const NO_PENDING: readonly Pending[] = [];
 
 // --- affinity ------------------------------------------------------------
@@ -312,9 +312,18 @@ export function affinity(c: Constants, svt: CompactServant, e: Enemy): Affinity 
     attribute: lookup(c.attrRel[svt.attribute], e.attribute, `attrRel[${svt.attribute}][${e.attribute}]`),
   };
 }
+/**
+ * Key of a unit's row in BattleState.aff: a unit with forms has one per form
+ * (a form may have another attribute, Aoko), so a transformation mid-wave
+ * reads the right one.
+ */
+export const affKey = (u: Unit): string => (u.svt.forms ? `${u.key}#${formOf(u.svt)}` : u.key);
 function affTable(c: Constants, units: readonly Unit[], enemies: readonly Enemy[]): Record<string, Affinity[]> {
   const out: Record<string, Affinity[]> = {};
-  for (const u of units) out[u.key] = enemies.map((e) => affinity(c, u.svt, e));
+  for (const u of units) {
+    if (!u.svt.forms) { out[u.key] = enemies.map((e) => affinity(c, u.svt, e)); continue; }
+    for (const f of ['low', 'high'] as const) out[`${u.key}#${f}`] = enemies.map((e) => affinity(c, inForm(u.svt, f), e));
+  }
   return out;
 }
 
@@ -360,10 +369,25 @@ function effectOn(u: Unit, e: Effect, v: LevelVal): Unit {
     return { ...u, buffs, pending: pending.length ? pending : NO_PENDING };
   }
   if (e.kind === 'transform') {
-    // New kit (skills, NP) of the other form; levels, cooldowns, buffs and gauge are kept.
+    // New kit (skills, NP) of the other form; levels, cooldowns, buffs and gauge
+    // are kept. A form that is another servant (Aoko) has its own ATK at the
+    // same level (Chaldea transformAlly); fou and CE ATK stay.
     if (!e.toForm) return u;
     const next = usableServant(inForm(u.svt, e.toForm));
-    return next === u.svt ? u : { ...u, svt: next };
+    if (next === u.svt) return u;
+    return { ...u, svt: next, atk: u.atk + next.atkGrowth[u.lv - 1] - u.svt.atkGrowth[u.lv - 1] };
+  }
+  if (e.kind === 'traitBuff') {
+    // At most stackMax buffs sharing one of its traits (Atlas SameBuffLimitNum): more fail.
+    const same = (b: Buff) => b.kind === 'traitBuff' && !!b.buffTraits?.some((t) => e.buffTraits?.includes(t));
+    if (e.stackMax !== undefined && u.buffs.filter(same).length >= e.stackMax) return u;
+    return { ...u, buffs: [...u.buffs, toBuff(e, 'traitBuff', v)] };
+  }
+  if (e.kind === 'removeTraitBuffs') {
+    // v.value of them at most, oldest first (the ones we model are all alike).
+    let left = v.value;
+    const buffs = u.buffs.filter((b) => !(left > 0 && b.kind === 'traitBuff' && b.buffTraits?.some((t) => e.buffTraits?.includes(t)) && left--));
+    return buffs.length === u.buffs.length ? u : { ...u, buffs };
   }
   if (e.kind === 'lossHp') {
     // The unit would die (or its HP is unknown): the move is not allowed.
@@ -690,7 +714,7 @@ export function mods(unit: Unit, enemy: Enemy, card: Card): Mods {
   const m: Mods = { atkMod: 0, cardMod: 0, npDmgMod: 0, powerMod: 0, npGainMod: 0, ocUp: 0, dmgPlus: 0 };
   const rates = unit.buffs.filter((b) => b.kind === 'buffRate');
   for (const b of unit.buffs) {
-    if (b.kind === 'buffRate' || b.kind === 'sealNp' || b.kind === 'sealSkill' || b.kind === 'stun' || b.kind === 'classRel' || !buffApplies(b, enemy, card)) continue;
+    if (b.kind === 'buffRate' || b.kind === 'sealNp' || b.kind === 'sealSkill' || b.kind === 'stun' || b.kind === 'classRel' || b.kind === 'traitBuff' || !buffApplies(b, enemy, card)) continue;
     m[MOD_FIELD[b.kind]] += rates.length ? rated(b, rates) : b.value;
   }
   return m;

@@ -201,9 +201,15 @@ describe('convertFunctions', () => {
     expect(run([buff('downTolerance', 'enemy')])).toEqual({ out: [], unsupported: [] });
   });
   it('without a lookup, skill-triggering buffs stay unsupported (old behaviour)', () => {
-    for (const t of ['attackAfterFunction', 'commandattackAfterFunction', 'selfturnendFunction', 'delayFunction']) {
+    for (const t of ['attackAfterFunction', 'skillBeforeFunction', 'selfturnendFunction', 'delayFunction']) {
       expect(run([buff(t, 'self', { Value: 900001 })]).unsupported).toEqual(['buff:' + t]);
     }
+  });
+  it('triggers an NP never sets off (command-card attacks, Extra-only attacks) are ignored on allies, no lookup needed', () => {
+    for (const t of ['commandattackBeforeFunction', 'commandattackAfterFunction', 'commandattackAfterFunctionMainOnly']) ignored(buff(t, 'self', { Value: 900001 }));
+    const onCard = (card: number) => ({ ...buff('attackBeforeFunction', 'self', { Value: 900001 }), buffs: [{ type: 'attackBeforeFunction', ckSelfIndv: [{ id: card }], ckOpIndv: [], script: {} }] });
+    ignored(onCard(4004)); // Extra attacks only
+    expect(run([onCard(4001)]).unsupported).toEqual(['buff:attackBeforeFunction']);
   });
   it('on-hit triggers (damage, guts, death) never fire on allies: ignored, no lookup needed', () => {
     for (const t of ['damageFunction', 'gutsFunction', 'deadFunction']) ignored(buff(t, 'self', { Value: 900001 }));
@@ -435,10 +441,10 @@ describe('popular farming servants (real fixtures)', () => {
   // Lookup built from saved /nice/NA/skill/{id} fixtures, like build-data does.
   const lookup = new Map<number, any>([skill966533, skill964095].map((k: any) => [k.id, k]));
   it('Koyanskaya of Light: NP-gain trigger resolved and ignored, simulable', () => {
-    // Without a lookup: old behaviour, now on the skill that grants it (S2), not the servant.
+    // A command-card trigger (S2): never set off by an NP, so even without a lookup.
     const bare = compactServant(koyanskaya as any);
     expect(bare.unsupported).toEqual([]);
-    expect(bare.skills[1].unsupported).toEqual(['buff:commandattackAfterFunctionMainOnly']);
+    expect(bare.skills[1].unsupported).toBeUndefined();
     const s = compactServant(koyanskaya as any, lookup);
     expect(s.unsupported).toEqual([]);
     expect(s.np).toMatchObject({ card: 'buster', aoe: true });
@@ -621,7 +627,8 @@ describe('per-part marks, deferred effects, buff effectiveness (real fixtures)',
   it('drop audit: helpful effects that are not modelled are reported per part', () => {
     const report: PartDrops[] = [];
     compactServant(koyanskaya as any, lookup, report);
-    expect(report).toEqual([{ part: 's2', drops: ['trigger:commandattackAfterFunctionMainOnly'] }]);
+    // Her S2 command-card trigger never fires on an NP: nothing lost, nothing reported.
+    expect(report).toEqual([]);
   });
 });
 

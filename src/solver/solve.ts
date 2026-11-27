@@ -1,4 +1,5 @@
 import type { Card, CompactMC, Constants, Effect } from '../data/types';
+import { inForm } from '../data/forms';
 // The engine's useSkill / useMc are imported as castSkill / castMc: they are not
 // React hooks, and the lint rule goes by the name.
 import { initBattle, useSkill as castSkill, useMc as castMc, endTurn, nextWave, livingSlots, isEnemyDebuff, soleTarget, canNp, canSkill, isHarmful, type BattleState, type Buff, type Enemy, type Quest, type TeamMember, type Unit } from '../engine/state';
@@ -503,13 +504,14 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
    * buff only counts for its cards (the NP is the only card fired); npGainUp
    * never counts for a buster NP (buster cards give no NP, a game rule).
    */
-  const helps = (e: { kind: Effect['kind']; cards?: readonly Card[] }, u: Unit): boolean => {
-    const np = u.svt.np;
-    if (!np) return false;
-    if (e.cards && !e.cards.includes(np.card)) return false;
-    if (e.kind === 'npGainUp' && np.card === 'buster') return false;
-    return true;
-  };
+  const helps = (e: { kind: Effect['kind']; cards?: readonly Card[] }, u: Unit): boolean =>
+    // A unit with forms: either kit's NP (it may transform before firing).
+    (u.svt.forms ? [u.svt.np, inForm(u.svt, u.svt.form === 'low' ? 'high' : 'low').np] : [u.svt.np]).some((np) => {
+      if (!np || np.noDamage) return false;
+      if (e.cards && !e.cards.includes(np.card)) return false;
+      if (e.kind === 'npGainUp' && np.card === 'buster') return false;
+      return true;
+    });
 
   function targetsOf(s: BattleState, effects: readonly Effect[], idx: number, caster: string | null, last: boolean): (string | undefined)[] | null {
     let relevant = false, needTarget = false;

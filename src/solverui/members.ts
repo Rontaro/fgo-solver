@@ -15,8 +15,9 @@ export interface CeChoice { ce: CompactCE | null; lv: number; mlb: boolean }
 const NO_CE: CeChoice = { ce: null, lv: 1, mlb: false };
 
 export function ownedToMember(o: OwnedServant, svt0: CompactServant, key: string, ce: CeChoice = NO_CE, form?: FormName): TeamMember {
-  // A servant with forms starts in the chosen form (default DEFAULT_FORM).
-  const svt = svt0.forms ? inForm(svt0, form ?? DEFAULT_FORM) : svt0;
+  // A servant with forms starts in the chosen form (default DEFAULT_FORM);
+  // a locked one (Aoko) always in its top-level form.
+  const svt = svt0.forms && !svt0.formLocked ? inForm(svt0, form ?? DEFAULT_FORM) : svt0;
   return {
     svt, lv: clampLv(svt, o.lv), npLv: o.npLv, skillLv: o.skillLv,
     append2Lv: Math.min(o.append2Lv, svt.append2.length), fou: o.fou,

@@ -3,6 +3,7 @@
  * replaying its steps on the current engine (the data or the engine may have
  * changed since it was saved).
  */
+import { formOf } from '../data/forms';
 import type { RegionData } from '../data/load';
 import type { Region } from '../data/types';
 import { questFromAtlas } from '../engine/quest';
@@ -33,7 +34,7 @@ export function toSavedMember(m: TeamMember, support: boolean): SavedMember {
   return {
     key: m.key, collectionNo: m.svt.collectionNo, lv: m.lv, npLv: m.npLv, skillLv: [...m.skillLv] as [number, number, number],
     append2Lv: m.append2Lv, fou: m.fou, ceNo: m.ce?.collectionNo ?? null, ceLv: m.ceLv, ceMlb: m.ceMlb, support,
-    ...(m.svt.forms && { form: m.svt.form ?? 'high' }),
+    ...(m.svt.forms && { form: formOf(m.svt) }),
   };
 }
 

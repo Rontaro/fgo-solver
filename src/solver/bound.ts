@@ -1,6 +1,6 @@
 import type { CompactMC, Constants, Effect, NoblePhantasm } from '../data/types';
 import { inForm } from '../data/forms';
-import { affinity, effectActive, isEnemyDebuff, layoutOf, usableServant, type BattleState, type Buff, type Enemy, type Quest, type Unit } from '../engine/state';
+import { affKey, affinity, effectActive, isEnemyDebuff, layoutOf, usableServant, type BattleState, type Buff, type Enemy, type Quest, type Unit } from '../engine/state';
 import { npDamage } from '../engine/damage';
 import { specificRate } from '../engine/np';
 
@@ -100,10 +100,14 @@ export function damageBound(s: BattleState, c: BoundCtx): BoundFail | null {
 
   /** Largest share of an enemy's HP the best 3 shooters of the pool leave standing on wave W. */
   function missingWith(pool0: readonly Unit[], W: number): number {
-    // A unit with forms may switch: both kits count (optimistic).
-    const pool = pool0.flatMap((u) => (u.svt.forms
-      ? [u, { ...u, svt: usableServant(inForm(u.svt, u.svt.form === 'low' ? 'high' : 'low')) }] : [u]));
-    const shooters = pool.filter((u) => u.svt.np);
+    // A unit with forms may switch: both kits count (optimistic), the other one
+    // at its own ATK (a form that is another servant, Aoko).
+    const pool = pool0.flatMap((u) => {
+      if (!u.svt.forms) return [u];
+      const svt = usableServant(inForm(u.svt, u.svt.form === 'low' ? 'high' : 'low'));
+      return [u, { ...u, svt, atk: u.atk + Math.max(0, svt.atkGrowth[u.lv - 1] - u.svt.atkGrowth[u.lv - 1]) }];
+    });
+    const shooters = pool.filter((u) => u.svt.np && !u.svt.np.noDamage);
     const enemies = W === T ? s.enemies : quest.waves[W];
     const sums = enemies.map(() => [] as number[]);
     // NPs of the turn that can still hit each enemy (see the header).
@@ -178,12 +182,12 @@ export function damageBound(s: BattleState, c: BoundCtx): BoundFail | null {
       const mult = maxRow(np.mult, u.npLv);
       enemies.forEach((en, i) => {
         if (en.hp <= 0) return;
-        const a = W === T && s.aff[u.key] ? s.aff[u.key][i] : affinity(c.constants, u.svt, en);
+        const a = W === T && s.aff[affKey(u)] ? s.aff[affKey(u)][i] : affinity(c.constants, u.svt, en);
         const m0 = perEnemy[i];
         const k = Math.min(5000, 1000 + rate) / 1000;
         const up = (v: number) => (rate > 0 && v > 0 ? v * k : v);
         const m = { atkMod: up(m0.atkMod), cardMod: up(m0.cardMod), npDmgMod: up(m0.npDmgMod), powerMod: up(m0.powerMod), dmgPlus: up(m0.dmgPlus) };
-        const se = specificRate(np, u.svt.traits, en, (tab) => maxRow(tab, u.npLv), u.svt.rarity);
+        const se = specificRate(np, u.svt.traits, en, (tab) => maxRow(tab, u.npLv), u.svt.rarity, 'max');
         sums[i].push(npDamage({
           atk: u.atk, mult, card: np.card, cardMod: m.cardMod + deb[i].res, classAtk: a.classAtk, triangle: bestTriangle(u, en, a.triangle, pool),
           attribute: a.attribute, atkMod: m.atkMod, defMod: (en.defUp ?? 0) - deb[i].def, npDmgMod: m.npDmgMod, powerMod: m.powerMod,

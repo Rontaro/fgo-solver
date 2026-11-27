@@ -64,8 +64,11 @@ const IGNORED_BUFFS_ALLY = new Set([
   // in the model.
   'subSelfdamage', 'downDefence', 'downDefencecommandall',
   // Adds a trait to our servant: we never read ally traits added at runtime,
-  // so at worst we miss a bonus that depends on it (conservative).
+  // so at worst we miss a bonus that depends on it (conservative). Except the
+  // trait buffs a damageNpIndividualSum counts (SUM_BUFF_TRAITS: traitBuff).
   'addIndividuality',
+  // Battle music: cosmetic.
+  'changeBgm',
   // Ignore enemy DEF buffs: enemies have none in the model; only helps.
   'pierceDefence',
   // Hit through special invincibility: only helps.
@@ -151,6 +154,21 @@ const IGNORED_FUNCS_ENEMY = new Set([
 // effects such as charm), defence ups (buffIncreaseDefence: not modelled on
 // our side), and Lady Avalon's own NP charge block (a demerit).
 const DEBUFF_TRAITS = new Set([3005, 3011, 3015, 3026, 3010, 3007, 2836]);
+/**
+ * Buff traits a damageNpIndividualSum counts on its holder, carried by buffs
+ * that do nothing else (Atlas addIndividuality): Aoko's Magic Bullets (2885).
+ * Such a buff is EffectKind traitBuff; a subState of these traits on our side
+ * is removeTraitBuffs.
+ */
+const SUM_BUFF_TRAITS = new Set([2885]);
+const sumTraitsOf = (f: any): number[] => (f.buffs?.[0]?.vals ?? []).map((t: any) => t.id).filter((id: number) => SUM_BUFF_TRAITS.has(id));
+/**
+ * Buff traits no buff we model carries, so removing them changes nothing:
+ * normalAokoBuff (2911), the buffs of base Aoko's S2 (star gain, crit rate and
+ * a turn-end party charge we drop: deferredOf models only charge on the
+ * holder), removed by her NP.
+ */
+const UNMODELLED_BUFF_TRAITS = new Set([2911]);
 
 // Conditions we understand. Anything else on a modelled effect: dropped if the
 // effect is helpful (we only lose a bonus), unsupported otherwise.
@@ -227,6 +245,16 @@ export const TRIGGER_BUFFS = new Set([
 ]);
 const TRIGGER_DEPTH = 2;
 
+// Triggers of our attacks that an NP never sets off (only NPs are played):
+// the command-card ones (Chaldea damage.dart: not on a TD card), and attack
+// ones limited to Extra attacks (ckSelfIndv cardExtra 4004, Aoko's passive).
+const COMMAND_TRIGGERS = new Set(['commandattackBeforeFunction', 'commandattackBeforeFunctionMainOnly', 'commandattackAfterFunction', 'commandattackAfterFunctionMainOnly']);
+function neverOnNp(f: any, t: string): boolean {
+  if (COMMAND_TRIGGERS.has(t)) return true;
+  const self: number[] = (f.buffs?.[0]?.ckSelfIndv ?? []).map((x: any) => x.id);
+  return t.startsWith('attack') && self.length > 0 && self.every((id) => id === 4004);
+}
+
 /** Skill ids a trigger buff function points to (every level and OC variant). */
 export function triggerSkillIds(f: any): number[] {
   const t = f.buffs?.[0]?.type;
@@ -252,6 +280,7 @@ function sideOf(f: any, ctx: Ctx): Side | undefined {
 function classifyTrigger(f: any, t: string, side: Side, ctx: Ctx): Class {
   const at = side === 'enemy' ? '@enemy' : '';
   if (side === 'ally' && TRIGGER_ON_HIT.has(t)) return { cls: 'ignore' };
+  if (side === 'ally' && neverOnNp(f, t)) return { cls: 'ignore' };
   if (!ctx.triggers) return { cls: 'unsupported', reason: 'buff:' + t + at };
   const fail = (why: string): Class => ({ cls: 'unsupported', reason: 'trigger:' + t + at + ':' + why });
   if (ctx.depth >= TRIGGER_DEPTH) return fail('depth');
@@ -310,6 +339,7 @@ function classify(f: any, ctx: Ctx = { depth: 0, flip: false }): Class {
       if (svalSets(f).some((set) => set.some((v: any) => (v.Value ?? 0) < 0))) return { cls: 'unsupported', reason: 'buff:buffRate-' };
       return rateTraitsOf(f) ? { cls: 'apply', kind: 'buffRate' } : { cls: 'ignore', drop: 'buffRate:untracked' };
     }
+    if (side === 'ally' && t === 'addIndividuality' && sumTraitsOf(f).length) return { cls: 'apply', kind: 'traitBuff' };
     if ((side === 'ally' ? IGNORED_BUFFS_ALLY : IGNORED_BUFFS_ENEMY).has(t)) return { cls: 'ignore' };
     // Turns some of our buffs into others (Kukulcan / Aoko: Invincible ->
     // Anti-Enforcement DEF): ignored when both sides are buffs we ignore anyway.
@@ -334,7 +364,8 @@ function classify(f: any, ctx: Ctx = { depth: 0, flip: false }): Class {
   if (side === 'ally' && ['gainNpFromTargets', 'gainHpFromTargets', 'gainNpIndividualSum'].includes(f.funcType)) return { cls: 'ignore', drop: 'func:' + f.funcType };
   if (side === 'ally' && f.funcType === 'subState') {
     const tv: number[] = (f.traitVals ?? []).map((t: any) => t.id);
-    if (tv.length && tv.every((id) => DEBUFF_TRAITS.has(id))) return { cls: 'ignore' };
+    if (tv.length && tv.every((id) => DEBUFF_TRAITS.has(id) || UNMODELLED_BUFF_TRAITS.has(id))) return { cls: 'ignore' };
+    if (ctx.depth === 0 && !ctx.flip && tv.length && tv.every((id) => SUM_BUFF_TRAITS.has(id))) return { cls: 'apply', kind: 'removeTraitBuffs', demerit: true };
     // Removing every positive buff (3004), alone or with debuff traits: modelled as clearBuffs.
     if (ctx.depth === 0 && !ctx.flip && tv.includes(3004) && tv.every((id) => id === 3004 || DEBUFF_TRAITS.has(id))) {
       return { cls: 'apply', kind: 'clearBuffs', demerit: true };
@@ -414,6 +445,8 @@ interface ConvOpts {
   hpMin?: number;
   /** The servant's id: a transformServant into itself (a form change, data/forms.ts) is modelled. */
   svtId?: number;
+  /** The servant id it transforms into, modelled as its 'high' form (crossTarget). */
+  crossTo?: number;
 }
 
 /**
@@ -455,6 +488,29 @@ function stripOnField(f: any): { f: any; onField: boolean } {
   const out = { ...f };
   for (const k of ['svals', ...OC_SVALS]) if (f[k]) out[k] = f[k].map((v: any) => { const o = { ...v }; delete o.OnField; return o; });
   return { f: out, onField: true };
+}
+
+/**
+ * Sval keys of the trait buffs (SUM_BUFF_TRAITS) that are part of the model,
+ * not conditions: on their addIndividuality, the stack limit
+ * (SameBuffLimitTargetIndividuality = one of its traits, SameBuffLimitNum =
+ * Effect.stackMax); on their subState, Value2 0 (no extra rule). Stripped so
+ * plain() accepts the function.
+ */
+function traitBuffKeys(f: any): { f: any; stackMax?: number } {
+  const sets = (g: (v: any) => any) => Object.fromEntries(['svals', ...OC_SVALS].filter((k) => f[k]).map((k) => [k, f[k].map(g)]));
+  const tr = sumTraitsOf(f);
+  if (f.buffs?.[0]?.type === 'addIndividuality' && tr.length) {
+    const all = svalSets(f).flat();
+    const lim = all[0]?.SameBuffLimitNum;
+    if (!all.every((v) => v.SameBuffLimitNum === lim && (lim === undefined || tr.includes(v.SameBuffLimitTargetIndividuality)))) return { f };
+    return { f: { ...f, ...sets(({ SameBuffLimitNum: _n, SameBuffLimitTargetIndividuality: _t, ...v }: any) => v) }, ...(lim !== undefined && { stackMax: lim }) };
+  }
+  const tv: number[] = (f.traitVals ?? []).map((t: any) => t.id);
+  if (f.funcType === 'subState' && tv.length && tv.every((id) => SUM_BUFF_TRAITS.has(id))) {
+    return { f: { ...f, ...sets(({ Value2, ...v }: any) => (Value2 === 0 ? v : { ...v, Value2 })) } };
+  }
+  return { f };
 }
 
 /** End-of-turn trigger buffs that can become deferred effects (Effect.deferred). */
@@ -552,7 +608,8 @@ export function convertFunctions(funcs: any[], unsupported: string[], opts: Conv
     // Battle-start effects: a condition on the unit's fixed traits (function
     // functvals, or the buff script's single INDIVIDUALITIE) is kept as
     // Effect.holderTraits and checked by the engine at battle start.
-    const { f, holderTraits } = opts.start ? holderCond(stripped.f) : { f: stripped.f, holderTraits: undefined };
+    const { f: f1, holderTraits } = opts.start ? holderCond(stripped.f) : { f: stripped.f, holderTraits: undefined };
+    const { f, stackMax } = traitBuffKeys(f1);
     // team=enemy: only runs when an enemy casts it. Never for our side.
     if (f.funcTargetTeam === 'enemy' || optionOnly(f)) { prevOk = false; continue; }
     const svals: any[] = f.svals ?? [];
@@ -614,6 +671,12 @@ export function convertFunctions(funcs: any[], unsupported: string[], opts: Conv
       continue;
     }
     if (f.funcType === 'transformServant' && idleTransform(f)) continue;
+    // Into its other servant id (Aoko): the 'high' form (see crossTarget).
+    if (f.funcType === 'transformServant' && f.funcTargetType === 'self' && opts.crossTo && svals.length && svals.every((v: any) => v.Value === opts.crossTo)) {
+      prevOk = false;
+      out.push({ kind: 'transform', target: 'self', lv: svals.map(() => ({ value: 1, turns: -1, count: -1 })), toForm: 'high' });
+      continue;
+    }
     const ctx: Ctx = { triggers: opts.triggers, depth: 0, flip: false, allowLoss: opts.allowLoss };
     const bt: string | undefined = f.buffs?.[0]?.type;
     const isState = f.funcType === 'addState' || f.funcType === 'addStateShort';
@@ -647,6 +710,11 @@ export function convertFunctions(funcs: any[], unsupported: string[], opts: Conv
       }));
       const e: Effect = { kind: c.kind, target: TARGET[f.funcTargetType], lv: lvAll(svals) };
       if (opts.npExtras && sets.length === 5 && sets.some((s) => JSON.stringify(s) !== JSON.stringify(svals))) e.oc = sets.map(lvAll);
+      if (c.kind === 'removeTraitBuffs') {
+        // How many it removes (Value): without one we cannot tell.
+        if (sets.flat().some((v) => !((v.Value ?? 0) > 0))) { unsupported.push('func:subState:count'); continue; }
+        e.buffTraits = (f.traitVals as any[]).map((t) => t.id);
+      }
       if (opts.npDamage && !afterDamage) e.pre = true;
       out.push(e);
       continue;
@@ -699,6 +767,13 @@ export function convertFunctions(funcs: any[], unsupported: string[], opts: Conv
         if (tr.length) e.buffTraits = tr;
       }
     }
+    if (c.kind === 'traitBuff') {
+      // Its value is only "present" (Atlas Value is the trait it adds: not ours).
+      e.lv = e.lv.map((v) => ({ ...v, value: v.value ? 1 : 0 }));
+      if (e.oc) e.oc = e.oc.map((row) => row.map((v) => ({ ...v, value: v.value ? 1 : 0 })));
+      e.buffTraits = sumTraitsOf(f);
+      if (stackMax !== undefined) e.stackMax = stackMax;
+    }
     if (opts.npDamage && !afterDamage) e.pre = true;
     out.push(e);
   }
@@ -735,11 +810,23 @@ function npOf(svt: any, servantLevel: string[], base: ConvOpts, report?: PartDro
   let np: any = null;
   for (const n of svt.noblePhantasms) if (!np || n.priority >= np.priority) np = n;
   if (!np) return null;
-  // Support NPs (no damage, e.g. Castoria) are not wave clearers: null.
+  // Support NPs (no damage, e.g. Castoria) are not wave clearers: null. One
+  // that transforms the servant (Aoko) is fired for that (noDamage).
   const dmg = np.functions.find(isDamage);
-  if (!dmg) return null;
+  const transforms = !!base.crossTo && np.functions.some((f: any) => f.funcType === 'transformServant' && f.svals?.some((v: any) => v.Value === base.crossTo));
+  if (!dmg && !transforms) return null;
   const card = CARD_BY_ID[String(np.card)];
   if (!card) { servantLevel.push('np:card:' + np.card); return null; }
+  if (!dmg) {
+    const unsupported: string[] = [], drops: string[] = [];
+    const extra = convertFunctions(np.functions, unsupported, { ...base, npExtras: true, drops });
+    if (drops.length) report?.push({ part: 'np', drops: uniq(drops) });
+    const zero = [0, 1, 2, 3, 4].map(() => [0, 0, 0, 0, 0]);
+    return {
+      card, aoe: true, mult: zero, hits: [], npRate: np.npGain.np, extra, noDamage: true,
+      ...(unsupported.length && { unsupported: uniq(unsupported) }),
+    };
+  }
   const unsupported: string[] = [], drops: string[] = [];
   const se = dmg.funcType === 'damageNpIndividual';
   const ocs: any[][] = [dmg.svals, ...OC_SVALS.map((k) => dmg[k])];
@@ -785,6 +872,8 @@ function npOf(svt: any, servantLevel: string[], base: ConvOpts, report?: PartDro
       onEnemy: v0.Target === 1, traits: v0.TargetList,
       base: ocs.map((oc) => oc.map((v) => v.Value2)), step: ocs.map((oc) => oc.map((v) => v.Correction ?? 0)),
       max: v0.ParamAddMaxCount ?? 0,
+      // Counts the holder's trait buffs too (engine: specificRate); only with a cap (the bound assumes it).
+      ...(v0.Target !== 1 && (v0.ParamAddMaxCount ?? 0) > 0 && v0.TargetList.some((t: number) => SUM_BUFF_TRAITS.has(t)) && { buffs: true as const }),
     };
   }
   if (ocs.some((oc) => oc.some((v) => (v.Rate ?? 1000) < 1000))) unsupported.push('np:rate');
@@ -928,32 +1017,57 @@ const optionOnly = (f: any) => f.svals?.length > 0 && f.svals.every((v: any) => 
 const ignoredTransform = (f: any) => idleTransform(f) || optionOnly(f);
 
 /**
+ * The servant a transformServant turns this one into, when we model it as its
+ * 'high' form (CompactServant.forms with its own ATK and traits): every
+ * transformation of the servant goes to that one id, it is in `others` (the
+ * raw servants by id) with the same class, and none of its own
+ * skills / NP transforms again. Chaldea's transformAlly also swaps the class
+ * passives: the caller requires them to compact the same. Else null.
+ */
+function crossTarget(svt: any, others: Map<number, any> | undefined): any | null {
+  const tf = [...svt.skills, ...svt.noblePhantasms].flatMap((g: any) => g.functions)
+    .filter((f: any) => f.funcType === 'transformServant' && f.funcTargetTeam !== 'enemy' && !ignoredTransform(f));
+  const ids = new Set(tf.flatMap((f: any) => (f.svals ?? []).map((v: any) => v.Value)));
+  if (ids.size !== 1 || tf.some((f: any) => f.funcTargetType !== 'self')) return null;
+  const t = others?.get([...ids][0] as number);
+  if (!t || t.id === svt.id || t.className !== svt.className) return null;
+  const again = [...t.skills, ...t.noblePhantasms].some((g: any) => g.functions.some((f: any) => f.funcType === 'transformServant' && f.funcTargetTeam !== 'enemy' && !ignoredTransform(f)));
+  return again ? null : t;
+}
+
+const passivesOf = (svt: any, opts: ConvOpts, unsupported: string[], drops: string[], castBlock: Set<number>): Effect[] =>
+  svt.classPassive.flatMap((p: any) => convertFunctions(p.functions.filter((f: any) => {
+    const tv = castBlockOf(f);
+    if (tv) tv.forEach((t) => castBlock.add(t));
+    return !tv;
+  }), unsupported, { ...opts, drops }));
+
+/**
  * `triggers`: skills run by trigger buffs (built by scripts/build-data.mjs).
  * Without it, trigger buffs other than the on-hit ones are unsupported.
  * `report`: drop audit sink (helpful effects not modelled, per part).
+ * `others`: every raw servant by id (collectionNo 0 included), for the
+ * servant a transformation leads to (crossTarget).
  */
-export function compactServant(svt: any, triggers?: TriggerLookup, report?: PartDrops[]): CompactServant {
+export function compactServant(svt: any, triggers?: TriggerLookup, report?: PartDrops[], others?: Map<number, any>): CompactServant {
   const unsupported: string[] = [];
   // appendPassive num 100..104 = append 1..5; append 2 (num 101) is "Load Magical Energy".
   const selfTraits = new Set<number>(svt.traits.map((t: any) => t.id));
-  const base: ConvOpts = { selfTraits, triggers, hpMin: svt.hpBase };
+  const hides = FORM_HIDES[svt.id];
+  const cross = hides ? null : crossTarget(svt, others);
+  const base: ConvOpts = { selfTraits, triggers, hpMin: svt.hpBase, ...(cross && { crossTo: cross.id }) };
   // A form change (e.g. Mélusine, Ptolemaios) swaps skills and NP: the highest
   // priority skill/NP picked below may only exist after it. Checked on every
   // skill and NP variant, not only the chosen ones.
   const groups = [...svt.skills, ...svt.noblePhantasms];
-  const hides = FORM_HIDES[svt.id];
-  if (!hides && groups.some((g: any) => g.functions.some((f: any) => f.funcType === 'transformServant' && f.funcTargetTeam !== 'enemy' && !ignoredTransform(f)))) {
+  if (!hides && !cross && groups.some((g: any) => g.functions.some((f: any) => f.funcType === 'transformServant' && f.funcTargetTeam !== 'enemy' && !ignoredTransform(f)))) {
     unsupported.push('func:transformServant');
   }
   const append2 = svt.appendPassive?.find((a: any) => a.num === 101)?.skill;
   const eventPassives = eventPassivesOf(svt, unsupported, base);
   const castBlock = new Set<number>();
   const passiveDrops: string[] = [];
-  const passives = svt.classPassive.flatMap((p: any) => convertFunctions(p.functions.filter((f: any) => {
-    const tv = castBlockOf(f);
-    if (tv) tv.forEach((t) => castBlock.add(t));
-    return !tv;
-  }), unsupported, { ...base, drops: passiveDrops }));
+  const passives = passivesOf(svt, base, unsupported, passiveDrops, castBlock);
   if (passiveDrops.length) report?.push({ part: 'passive', drops: uniq(passiveDrops) });
   // A servant with forms: each kit drops the variants hidden in that form; the
   // top level is the 'high' one (see data/forms.ts).
@@ -964,7 +1078,25 @@ export function compactServant(svt: any, triggers?: TriggerLookup, report?: Part
   const high = kit(hides?.high, report);
   const skills = high.skills;
   const np = high.np;
-  const forms = hides ? { low: kit(hides.low), high } : undefined;
+  let forms: CompactServant['forms'] = hides ? { low: kit(hides.low), high } : undefined;
+  if (cross) {
+    // Its own kit (no drop report: it is not a servant of its own), ATK,
+    // traits and attribute; the class passives must come out the same (they are not swapped).
+    const cTraits = new Set<number>(cross.traits.map((t: any) => t.id));
+    const cOpts: ConvOpts = { selfTraits: cTraits, triggers, hpMin: cross.hpBase, svtId: cross.id };
+    const cUns: string[] = [];
+    const cPassives = passivesOf(cross, cOpts, cUns, [], new Set());
+    if (cUns.length || JSON.stringify(cPassives) !== JSON.stringify(passives)) unsupported.push('func:transformServant:passives');
+    else {
+      forms = {
+        low: high,
+        high: {
+          skills: skillsOf(cross.skills, cOpts), np: npOf(cross, unsupported, cOpts), atkGrowth: cross.atkGrowth, traits: cross.traits.map((t: any) => t.id),
+          ...(cross.attribute !== svt.attribute && { attribute: cross.attribute }),
+        },
+      };
+    }
+  }
   const losesHp = [...skills.flatMap((k) => k.effects), ...(np?.extra ?? [])].some((e) => e.kind === 'lossHp');
   return {
     id: svt.id, collectionNo: svt.collectionNo, name: svt.name,
@@ -982,6 +1114,7 @@ export function compactServant(svt: any, triggers?: TriggerLookup, report?: Part
     ...((b) => (b.length ? { eventBonus: b } : {}))(servantBonusesOf(svt)),
     ...(losesHp && Array.isArray(svt.hpGrowth) && { hp: svt.hpGrowth }),
     ...(forms && { forms }),
+    ...(cross && forms && { form: 'low' as const, formLocked: true as const }),
   };
 }
 

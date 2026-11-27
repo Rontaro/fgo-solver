@@ -31,16 +31,24 @@ export const formOfLimit = (limit: number): FormName => (limit >= 3 ? 'high' : '
 
 const views = new WeakMap<CompactServant, Partial<Record<FormName, CompactServant>>>();
 
+/** The form of a servant with forms (the top level is 'high' unless it says otherwise). */
+export const formOf = (svt: CompactServant): FormName => svt.form ?? 'high';
+
 /**
  * The servant in the given form (same object for the same base and form, so
  * the engine's per-servant caches keep working). A servant without forms is
- * returned as is.
+ * returned as is. A form with its own ATK / traits / attribute (a transformation into
+ * another servant id, Aoko) carries them too.
  */
 export function inForm(svt: CompactServant, form: FormName): CompactServant {
   const base = svt.formBase ?? svt;
   if (!base.forms) return svt;
-  if (form === 'high') return base;
+  if (form === formOf(base)) return base;
   let v = views.get(base);
   if (!v) { v = {}; views.set(base, v); }
-  return (v[form] ??= { ...base, skills: base.forms[form].skills, np: base.forms[form].np, form, formBase: base });
+  const k = base.forms[form];
+  return (v[form] ??= {
+    ...base, skills: k.skills, np: k.np, form, formBase: base,
+    ...(k.atkGrowth && { atkGrowth: k.atkGrowth }), ...(k.traits && { traits: k.traits }), ...(k.attribute && { attribute: k.attribute }),
+  });
 }

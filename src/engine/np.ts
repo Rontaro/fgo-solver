@@ -1,7 +1,7 @@
 import type { Effect, LevelVal, NoblePhantasm } from '../data/types';
 import { npDamage } from './damage';
 import { splitHits, hitsOnEnemy, npRefund } from './npgain';
-import { applyEffect, canNp, syncAuras, triangleOf, mods, buffApplies, gaugeCap, livingSlots, refillField, chooseTarget, npTarget, debuffSum, consumeDebuffs, type BattleState, type Buff, type EffectDraft, type Enemy } from './state';
+import { affKey, applyEffect, canNp, syncAuras, triangleOf, mods, buffApplies, gaugeCap, livingSlots, refillField, chooseTarget, npTarget, debuffSum, consumeDebuffs, type BattleState, type Buff, type EffectDraft, type Enemy } from './state';
 
 export interface NpResult { state: BattleState; killedAll: boolean; minMargin: number; }
 
@@ -11,10 +11,11 @@ const extraVal = (e: Effect, ocLv: number, npLv: number): LevelVal => (e.oc ? e.
  * Specific attack rate of the NP against one enemy (permille, 1000 = none):
  * supereffective vs a trait (seMult), or damageNpIndividualSum (see
  * NoblePhantasm.sum). pick reads a [ocLv-1][npLv-1] table (the engine: the
- * fired OC; the bound: the best OC).
+ * fired OC; the bound: the best OC). ownBuffs: the attacker's buffs, for a
+ * sum over them ('max': assume the most).
  */
 export function specificRate(np: NoblePhantasm, selfTraits: readonly number[], enemy: Pick<Enemy, 'traits' | 'rarity'>, pick: (t: number[][]) => number,
-  selfRarity?: number): number {
+  selfRarity?: number, ownBuffs?: readonly Buff[] | 'max'): number {
   if (np.seTraits && np.seMult && np.seTraits.some((tr) => enemy.traits.includes(tr))) return pick(np.seMult);
   if (np.rare) {
     const r = np.rare.onEnemy ? enemy.rarity : selfRarity;
@@ -23,6 +24,10 @@ export function specificRate(np: NoblePhantasm, selfTraits: readonly number[], e
   if (np.sum) {
     const own = np.sum.onEnemy ? enemy.traits : selfTraits;
     let n = np.sum.traits.filter((t) => own.includes(t)).length;
+    // The holder's traitBuffs (Aoko's bullets): one count each; 'max' = the
+    // most it can count (the bound). sum.buffs always comes with a max.
+    if (np.sum.buffs && ownBuffs === 'max') n = np.sum.max;
+    else if (np.sum.buffs && ownBuffs && ownBuffs !== 'max') for (const b of ownBuffs) if (b.kind === 'traitBuff' && b.buffTraits?.some((t) => np.sum!.traits.includes(t))) n++;
     if (np.sum.max > 0) n = Math.min(n, np.sum.max);
     if (n > 0) return pick(np.sum.base) + n * pick(np.sum.step);
   }
@@ -65,6 +70,7 @@ export function fireNp(state: BattleState, unitKey: string, targetIndex?: number
   if (!np) throw new Error(`${unitKey} has no damage NP`);
   if (u0.gauge < 10000) throw new Error(`${unitKey} NP gauge below 100%`);
   if (!canNp(u0)) throw new Error(`${unitKey} cannot fire its NP (seal / stun)`);
+  if (np.noDamage) return fireEffectsOnly(state, front, ui, np);
 
   // Enemy indices (state.enemies) hit by the NP.
   const living = livingSlots(state);
@@ -93,7 +99,7 @@ export function fireNp(state: BattleState, unitKey: string, targetIndex?: number
   applyExtras(pre, np.extra, true, ocLv, npLv, unitKey, turnTarget);
 
   const u = front[ui]!;
-  const aff = state.aff[unitKey];
+  const aff = state.aff[affKey(u)];
   if (!aff) throw new Error(`no affinity for ${unitKey}`);
   const mult = np.mult[ocLv - 1][npLv - 1];
   const used = new Set<Buff>();
@@ -109,7 +115,7 @@ export function fireNp(state: BattleState, unitKey: string, targetIndex?: number
     const m = { ...m0, cardMod: m0.cardMod + debuffSum(t, 'cardResDown', np.card) };
     const defMod = (t.defUp ?? 0) - debuffSum(t, 'defDown', np.card);
     for (const b of u.buffs) if (b.count > 0 && buffApplies(b, t, np.card)) used.add(b);
-    const se = specificRate(np, u.svt.traits, t, (tab) => tab[ocLv - 1][npLv - 1], u.svt.rarity);
+    const se = specificRate(np, u.svt.traits, t, (tab) => tab[ocLv - 1][npLv - 1], u.svt.rarity, u.buffs);
     const damage = npDamage({
       atk: u.atk, mult, card: np.card, cardMod: m.cardMod,
       classAtk: a.classAtk, triangle: triangleOf(u, t, a.triangle), attribute: a.attribute,
@@ -148,4 +154,24 @@ export function fireNp(state: BattleState, unitKey: string, targetIndex?: number
   const died = front.some((x, i) => !x && state.front[i]);
   const next = refillField({ ...state, front, enemies: after, npsFired: state.npsFired + 1 });
   return { state: died ? syncAuras(next) : next, killedAll: after.every((e) => e.hp <= 0), minMargin };
+}
+
+/**
+ * An NP with no damage (NoblePhantasm.noDamage, Aoko's base NP): gauge -> 0,
+ * then its extras in order, at the OC of the gauge plus the chain bonus (no
+ * enemy to read upChagetd against: not counted, which only lowers OC-scaled
+ * extras). It hits nobody, so no refund and nothing dies; it counts as an NP
+ * of the chain for the next ones.
+ */
+function fireEffectsOnly(state: BattleState, front: (BattleState['front'][number])[], ui: number, np: NoblePhantasm): NpResult {
+  const u0 = front[ui]!;
+  const ocLv = Math.max(1, Math.min(5, Math.floor(u0.gauge / 10000) + state.npsFired));
+  front[ui] = { ...u0, gauge: 0 };
+  const d: EffectDraft = { front, cond: state.cond, enemies: state.enemies, field: state.field };
+  const target = npTarget(state);
+  applyExtras(d, np.extra, true, ocLv, u0.npLv, u0.key, target);
+  applyExtras(d, np.extra, false, ocLv, u0.npLv, u0.key, target);
+  const died = front.some((x, i) => !x && state.front[i]);
+  const next = refillField({ ...state, front, enemies: d.enemies!, npsFired: state.npsFired + 1 });
+  return { state: died ? syncAuras(next) : next, killedAll: false, minMargin: Infinity };
 }

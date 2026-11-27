@@ -147,7 +147,7 @@ export function TeamBuilder({ slots, setSlots, servants, ces, mcs, owned, mcId, 
           </span>
         </button>
         )}
-        {locked && v.forms && (
+        {locked && v.forms && !v.formLocked && (
           <label className="flex items-center gap-2 px-1 text-xs text-night-300">{t.startForm}
             <select className={inp} value={s.form ?? DEFAULT_FORM}
               onChange={(e) => update(i, { form: e.target.value as 'low' | 'high' })}>
