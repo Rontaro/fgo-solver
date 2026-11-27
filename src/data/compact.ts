@@ -527,8 +527,9 @@ function deferredOf(f: any, at: Deferred['at'], opts: ConvOpts): Effect[] | stri
  *   same list succeeded. Kept only when |Rate| >= 1000 and the previous function
  *   was applied unconditionally (ally target, no extra conditions, guaranteed
  *   at every level). Otherwise treated like a failed chance (value 0).
- * - ActSet / ActSelectIndex (random or player-chosen option): not guaranteed,
- *   handled like 0 <= Rate < 1000.
+ * - ActSet / ActSelectIndex 0 (random pick, or the skill's option 0): not
+ *   guaranteed, handled like 0 <= Rate < 1000. ActSelectIndex >= 1: an option
+ *   we never pick, dropped (optionOnly).
  * Rate is evaluated per level, since it can vary across levels.
  * lossNp (deferred only) must be guaranteed at every level: a drain we cannot
  * count on either way is unsupported.
@@ -553,7 +554,7 @@ export function convertFunctions(funcs: any[], unsupported: string[], opts: Conv
     // Effect.holderTraits and checked by the engine at battle start.
     const { f, holderTraits } = opts.start ? holderCond(stripped.f) : { f: stripped.f, holderTraits: undefined };
     // team=enemy: only runs when an enemy casts it. Never for our side.
-    if (f.funcTargetTeam === 'enemy') { prevOk = false; continue; }
+    if (f.funcTargetTeam === 'enemy' || optionOnly(f)) { prevOk = false; continue; }
     const svals: any[] = f.svals ?? [];
     // svals = OC1; svals2..svals5 = OC2..OC5 (NP functions only). The Rate rule
     // applies to every OC variant; plain() checks the keys of all of them.
@@ -916,6 +917,15 @@ function castBlockOf(f: any): number[] | null {
  */
 const IDLE_TRANSFORMS = new Set([600710]);
 const idleTransform = (f: any) => f.funcTargetType === 'self' && f.svals?.length > 0 && f.svals.every((v: any) => IDLE_TRANSFORMS.has(v.Value));
+/**
+ * An effect of a skill option the player picks (every sval ActSelectIndex >= 1:
+ * Prelati S1 "swap", Flora S3 "garden state"). Option 0 ("don't swap", the
+ * normal state) always exists and is the one we model, so these effects never
+ * happen: dropped, whatever they are (their transformations included).
+ * Option-0 effects (ActSelectIndex 0) stay failed chances (isChancy).
+ */
+const optionOnly = (f: any) => f.svals?.length > 0 && f.svals.every((v: any) => typeof v.ActSelectIndex === 'number' && v.ActSelectIndex >= 1);
+const ignoredTransform = (f: any) => idleTransform(f) || optionOnly(f);
 
 /**
  * `triggers`: skills run by trigger buffs (built by scripts/build-data.mjs).
@@ -932,7 +942,7 @@ export function compactServant(svt: any, triggers?: TriggerLookup, report?: Part
   // skill and NP variant, not only the chosen ones.
   const groups = [...svt.skills, ...svt.noblePhantasms];
   const hides = FORM_HIDES[svt.id];
-  if (!hides && groups.some((g: any) => g.functions.some((f: any) => f.funcType === 'transformServant' && f.funcTargetTeam !== 'enemy' && !idleTransform(f)))) {
+  if (!hides && groups.some((g: any) => g.functions.some((f: any) => f.funcType === 'transformServant' && f.funcTargetTeam !== 'enemy' && !ignoredTransform(f)))) {
     unsupported.push('func:transformServant');
   }
   const append2 = svt.appendPassive?.find((a: any) => a.num === 101)?.skill;

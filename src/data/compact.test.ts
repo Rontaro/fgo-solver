@@ -160,6 +160,21 @@ describe('convertFunctions', () => {
     convertFunctions([tr(2501500)], unsupported);
     expect(unsupported).toContain('func:transformServant');
   });
+  it('effects of skill option 1+ (ActSelectIndex >= 1: Prelati, Flora) are dropped, even unsupported ones', () => {
+    const unsupported: string[] = [];
+    const opt = { funcType: 'addStateShort', funcTargetType: 'self', buffs: [{ type: 'tdTypeChangeArts', vals: [] }], svals: [{ Rate: 5000, Turn: 5, Count: -1, ActSelectIndex: 1 }] };
+    expect(convertFunctions([opt], unsupported)).toEqual([]);
+    expect(unsupported).toEqual([]);
+  });
+  it('a transformation the player opts into (ActSelectIndex >= 1: Prelati, Flora) is dropped; option 0 or no choice is not', () => {
+    const tr = (extra: object) => ({ funcType: 'transformServant', funcTargetType: 'self', buffs: [], svals: [{ Rate: 5000, Value: 505700, Target: 0, ...extra }] });
+    ignored(tr({ ActSelectIndex: 1, CancelTransform: 1 }));
+    for (const f of [tr({}), tr({ ActSelectIndex: 0 })]) {
+      const unsupported: string[] = [];
+      convertFunctions([f], unsupported);
+      expect(unsupported).toContain('func:transformServant');
+    }
+  });
   it('only-helpful effects on allies are ignored', () => {
     for (const t of ['pierceInvincible', 'breakAvoidance', 'subSelfdamage', 'downDefence',
       'downDefencecommandall', 'addIndividuality']) ignored(buff(t, 'self'));
