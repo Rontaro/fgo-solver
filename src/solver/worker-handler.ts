@@ -2,7 +2,7 @@ import type { CompactMC, Constants } from '../data/types';
 import type { Quest, TeamMember } from '../engine/state';
 import { questFromAtlas, UnsupportedQuestError, type RawQuest } from '../engine/quest';
 import { findClosest, solve, type Solution, type SolveResult, type SolveStats } from './solve';
-import { autocomplete, type AutocompleteDeps, type AutocompleteResult, type Slot } from './autocomplete';
+import { autocomplete, type AutocompleteDeps, type AutocompleteResult, type CeFill, type Slot } from './autocomplete';
 
 /*
  * Worker message protocol, as a pure function so it runs without a Worker.
@@ -21,7 +21,7 @@ interface Common { mc: CompactMC; mcLv: number; constants: Constants }
 export type SolvePayload = Common & QuestInput & { kind: 'team'; team: TeamMember[]; maxMs: number; maxSolutions?: number };
 export type AutocompletePayload = Common & QuestInput & {
   kind: 'autocomplete'; slots: Slot[]; roster: TeamMember[]; supportPool: TeamMember[];
-  maxMs: number; maxPerTeam: number; maxCandidates?: number;
+  maxMs: number; maxPerTeam: number; maxCandidates?: number; ceFill?: CeFill;
 };
 
 export type InMsg =
@@ -66,7 +66,7 @@ export async function handleMessage(msg: InMsg, post: (m: OutMsg) => void, deps:
     let last = t0, triedTeams = 0, solutions = 0;
     const result = await autocomplete({
       slots: p.slots, roster: p.roster, supportPool: p.supportPool,
-      mc: p.mc, mcLv: p.mcLv, quest, constants: p.constants, maxCandidates: p.maxCandidates,
+      mc: p.mc, mcLv: p.mcLv, quest, constants: p.constants, maxCandidates: p.maxCandidates, ceFill: p.ceFill,
       opts: {
         maxMs: p.maxMs, maxPerTeam: p.maxPerTeam, cancel,
         onSolution: (solution, team) => { solutions++; post({ type: 'solution', id, solution, team: team.map((m) => m.key) }); },

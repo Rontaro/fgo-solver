@@ -1,4 +1,4 @@
-import type { CompactMC, Constants, EffectKind } from '../data/types';
+import type { CompactCE, CompactMC, Constants, EffectKind } from '../data/types';
 import type { Quest, TeamMember } from '../engine/state';
 import { solve as realSolve, type Solution, type SolveResult } from './solve';
 
@@ -28,7 +28,34 @@ import { solve as realSolve, type Solution, type SolveResult } from './solve';
  * is when a cancel posted to a worker can land. Within one solve, the flag is
  * only seen if it was set before the solve started (or from onSolution), so
  * maxPerTeam is the bound there.
+ *
+ * Event CEs (req.ceFill, event nodes): an auto-picked member without a CE is
+ * equipped before its solve. Supports get ceFill.support (any friend can bring
+ * it); roster picks take ceFill.roster in order, each owned copy once per team.
+ * An equipped member's key gets a suffix (@s, or @<roster index>) so a key
+ * still names one exact member: equippedMember rebuilds it from the base key.
  */
+
+/** A CE to equip on auto-picked members (event nodes). */
+export interface CeFillChoice { ce: CompactCE; lv: number; mlb: boolean }
+export interface CeFill { roster: readonly CeFillChoice[]; support: CeFillChoice | null }
+
+const withCe = (m: TeamMember, c: CeFillChoice, tag: string): TeamMember =>
+  ({ ...m, ce: c.ce, ceLv: Math.min(c.lv, c.ce.atkGrowth.length), ceMlb: c.mlb, key: `${m.key}@${tag}` });
+
+/**
+ * The member a key names when autocomplete equipped it (key "<base>@s" or
+ * "<base>@<i>"), from its base member and the same ceFill; null when the key
+ * has no suffix or the suffix does not resolve.
+ */
+export function equippedMember(key: string, base: (k: string) => TeamMember | undefined, fill: CeFill): TeamMember | null {
+  const at = key.lastIndexOf('@');
+  if (at < 0) return null;
+  const m = base(key.slice(0, at));
+  const tag = key.slice(at + 1);
+  const c = tag === 's' ? fill.support : /^\d+$/.test(tag) ? fill.roster[Number(tag)] : undefined;
+  return m && c ? withCe(m, c, tag) : null;
+}
 
 /** pool: the user's own short list for this slot, each tried in turn (in list order). */
 export type Slot = { locked: TeamMember } | { free: true } | { support: true } | { pool: readonly TeamMember[] };
@@ -56,6 +83,8 @@ export interface AutocompleteRequest {
   mc: CompactMC; mcLv: number; quest: Quest; constants: Constants;
   opts: AutocompleteOptions;
   maxCandidates?: number;
+  /** Event CEs for the auto-picked members (absent: they stay without a CE). */
+  ceFill?: CeFill;
 }
 
 export interface AutocompleteResult {
@@ -182,9 +211,14 @@ export async function autocomplete(req: AutocompleteRequest, deps: AutocompleteD
     // Picks are already in descending score order (candidate lists are sorted, subsets lexicographic).
     const freePicks = [...combo.free], supportPicks = [...combo.support], listPicks = [...combo.pool];
     const team: TeamMember[] = [];
+    let nextCe = 0;
     for (const s of slots) {
-      const m = 'locked' in s ? s.locked : 'pool' in s ? listPicks.shift()
+      let m = 'locked' in s ? s.locked : 'pool' in s ? listPicks.shift()
         : ('free' in s ? freePicks.shift() : supportPicks.shift())?.m;
+      if (m && req.ceFill && !m.ce && ('free' in s || 'support' in s)) {
+        if ('support' in s) { if (req.ceFill.support) m = withCe(m, req.ceFill.support, 's'); }
+        else if (nextCe < req.ceFill.roster.length) { m = withCe(m, req.ceFill.roster[nextCe], String(nextCe)); nextCe++; }
+      }
       if (m) team.push(m);
     }
 

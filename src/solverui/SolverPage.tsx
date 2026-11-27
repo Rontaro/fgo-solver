@@ -6,11 +6,11 @@ import type { TeamMember } from '../engine/state';
 import { IdbRosterStore } from '../roster/store';
 import type { OwnedCE, OwnedServant } from '../roster/types';
 import { compareSolutions, type NearMiss, type Partial, type Solution, type SolveStats } from '../solver/solve';
-import type { Slot } from '../solver/autocomplete';
+import { equippedMember, type CeFill, type Slot } from '../solver/autocomplete';
 import type { InMsg, OutMsg, Progress } from '../solver/worker-handler';
 import { defaultMc, describeTurns, formatTurns, ownedToMember, slotEnemyNames, supportMember, SUPPORT_POOL_CAP, type CeChoice } from './members';
 import { QuestPicker, type PickedQuest, type QuestPreset } from './QuestPicker';
-import { eventCesFor } from './eventCes';
+import { eventCeFill, eventCesFor } from './eventCes';
 import { BonusChips, dropTotal, teamBonus } from './eventBonus';
 import { addResult, addTeam, type SavedQuest } from '../saved/store';
 import { dataVersionOf, toSavedMember } from '../saved/verify';
@@ -59,6 +59,16 @@ export function SolverPage({ load }: { load?: SolverLoad | null }) {
   const worker = useRef<Worker | null>(null);
   const jobId = useRef(0);
   const members = useRef(new Map<string, TeamMember>());
+  // The event CEs the last autocomplete run equipped (keys "<base>@<tag>", see equippedMember).
+  const ceFillRef = useRef<CeFill | undefined>(undefined);
+  /** The member a solution key names (also an autocomplete member wearing an event CE). */
+  const memberAt = (k: string): TeamMember | undefined => {
+    const m = members.current.get(k);
+    if (m || !ceFillRef.current) return m;
+    const e = equippedMember(k, (b) => members.current.get(b), ceFillRef.current);
+    if (e) members.current.set(k, e);
+    return e ?? undefined;
+  };
   const [preset, setPreset] = useState<QuestPreset | null>(null);
   const [savedKeys, setSavedKeys] = useState<Set<string>>(new Set());
   const [note, setNote] = useState('');
@@ -110,7 +120,7 @@ export function SolverPage({ load }: { load?: SolverLoad | null }) {
   // Event bonus of each solution's party (event drop / point bonuses of the node's event).
   const withBonus = run ? found.map((f, i) => {
     const keysOf = f.team ?? [...run.front, ...run.back];
-    const ms = keysOf.flatMap((k) => { const m = members.current.get(k); return m ? [m] : []; });
+    const ms = keysOf.flatMap((k) => { const m = memberAt(k); return m ? [m] : []; });
     return { f, i, bonus: teamBonus(ms, run.q.eventId) };
   }) : [];
   const hasBonus = withBonus.some((x) => x.bonus.length > 0);
@@ -118,8 +128,8 @@ export function SolverPage({ load }: { load?: SolverLoad | null }) {
     ? [...withBonus].sort((a, b) => dropTotal(b.bonus) - dropTotal(a.bonus) || compareSolutions(a.f.solution, b.f.solution))
     : withBonus.filter((x) => sorted.includes(x.f)).sort((a, b) => compareSolutions(a.f.solution, b.f.solution))).slice(0, MAX_SHOWN);
 
-  const name = (k: string | undefined) => (k ? members.current.get(k)?.svt.name ?? k : '?');
-  const unit = (k: string | undefined) => (k ? members.current.get(k) : undefined);
+  const name = (k: string | undefined) => (k ? memberAt(k)?.svt.name ?? k : '?');
+  const unit = (k: string | undefined) => (k ? memberAt(k) : undefined);
 
   const start = () => {
     if (problem || !quest || !mc) return;
@@ -132,6 +142,7 @@ export function SolverPage({ load }: { load?: SolverLoad | null }) {
     const team = locked.flatMap((m) => (m ? [add(m)] : []));
     const common = { mc, mcLv: MC_LV, constants: data.constants, rawQuest: quest.raw, maxMs: maxS * 1000 };
     let msg: InMsg;
+    let ceFill: CeFill | undefined;
     if (isAuto) {
       const ok = (cn: number) => data.servants.get(cn)?.unsupported.length === 0;
       const roster = owned.filter((o) => ok(o.collectionNo)).map((o) => add(ownedToMember(o, data.servants.get(o.collectionNo)!, `r${o.collectionNo}`)));
@@ -147,12 +158,16 @@ export function SolverPage({ load }: { load?: SolverLoad | null }) {
       const acSlots: Slot[] = slots.flatMap((s, i): Slot[] => (locked[i] ? [{ locked: locked[i]! }]
         : s.kind === 'free' ? [{ free: true }] : s.kind === 'supportAuto' ? [{ support: true }]
         : s.kind === 'list' ? [{ pool: listMembers(s, i) }] : []));
-      msg = { type: 'solve', id, payload: { ...common, kind: 'autocomplete', slots: acSlots, roster, supportPool,
+      // Event node: auto-picked members wear the event CEs (owned copies; the support the best one MLB).
+      const rosterCes = slots.flatMap((s) => ((s.kind === 'roster' || s.kind === 'list') && s.ceNo !== null ? [s.ceNo] : []));
+      ceFill = eventCes.length ? eventCeFill(eventCes, ownedCes, rosterCes, quest.eventId) : undefined;
+      msg = { type: 'solve', id, payload: { ...common, kind: 'autocomplete', slots: acSlots, roster, supportPool, ceFill,
         maxPerTeam: Math.max(1000, Math.min(5000, common.maxMs / 10)) } };
     } else {
       msg = { type: 'solve', id, payload: { ...common, kind: 'team', team } };
     }
     members.current = map;
+    ceFillRef.current = ceFill;
     const k = team.map((m) => m.key);
     setRun({ kind: isAuto ? 'autocomplete' : 'team', front: k.slice(0, 3), back: k.slice(3), mc, quest: quest.label,
       q: { id: quest.id, phase: quest.phase, label: quest.label, eventId: quest.eventId }, slotNames: slotEnemyNames(quest.raw) });
@@ -174,7 +189,7 @@ export function SolverPage({ load }: { load?: SolverLoad | null }) {
     w.postMessage(msg);
   };
 
-  const fgaTeam = (keys: string[]) => keys.flatMap((k) => { const m = members.current.get(k); return m ? [m] : []; });
+  const fgaTeam = (keys: string[]) => keys.flatMap((k) => { const m = memberAt(k); return m ? [m] : []; });
   const downloadFga = (f: Found, keys: string[], n: number) => {
     if (!run) return;
     const team = fgaTeam(keys);
@@ -201,7 +216,7 @@ export function SolverPage({ load }: { load?: SolverLoad | null }) {
   /** Saves a found solution or the closest line (Results tab). */
   const saveResult = (id: string, keys: string[], front: string[], back: string[], x: { kind: 'solution'; s: Solution } | { kind: 'closest'; c: NearMiss }) => {
     if (!run) return;
-    const ms = keys.flatMap((k) => { const m = members.current.get(k); return m ? [toSavedMember(m, !k.startsWith('r'))] : []; });
+    const ms = keys.flatMap((k) => { const m = memberAt(k); return m ? [toSavedMember(m, !k.startsWith('r'))] : []; });
     const base = {
       name: run.quest, quest: run.q, members: ms, front, back, mcId: run.mc.id, dataVersion: dataVersionOf(data),
     };
@@ -257,6 +272,9 @@ export function SolverPage({ load }: { load?: SolverLoad | null }) {
             <p>{error.reasons ? t.unsupportedQuest : t.error(error.message)}</p>
             {error.reasons && <ul className="list-disc pl-5">{error.reasons.map((r, i) => <li key={i}>{r}</li>)}</ul>}
           </div>
+        )}
+        {run?.kind === 'autocomplete' && ceFillRef.current && (ceFillRef.current.roster.length > 0 || ceFillRef.current.support) && (
+          <p className="text-xs text-gold-300">{t.autoEventCes}</p>
         )}
         {!running && run && found.length === 0 && !error && (
           <p className="text-sm text-amber-300">

@@ -4,7 +4,7 @@ import type { Quest, TeamMember } from '../engine/state';
 import { altria, castoria, kaleidoscope, mcCombat, constants, member } from '../engine/test-helpers';
 import type { RawQuest } from '../engine/quest';
 import { solve } from './solve';
-import { autocomplete, candidateScore, type AutocompleteRequest, type Slot } from './autocomplete';
+import { autocomplete, candidateScore, equippedMember, type AutocompleteRequest, type CeFill, type Slot } from './autocomplete';
 import { handleMessage, type OutMsg, type SolvePayload, type AutocompletePayload } from './worker-handler';
 
 const fill = (value: number) => Array.from({ length: 10 }, () => ({ value, turns: -1, count: -1 }));
@@ -104,6 +104,43 @@ describe('autocomplete', () => {
     const r = await autocomplete(req(twoFree, { opts: { maxMs: 30, maxPerTeam: 1000 } }), { now: () => (t += 10), yieldNow });
     expect(r.triedTeams).toBeLessThan(66);
     expect(r.exhausted).toBe(false);
+  });
+});
+
+describe('autocomplete event CEs (ceFill)', () => {
+  const fillCes: CeFill = {
+    roster: [{ ce: kaleidoscope, lv: 100, mlb: true }, { ce: kaleidoscope, lv: 30, mlb: false }],
+    support: { ce: kaleidoscope, lv: 999, mlb: true },
+  };
+  it('equips auto picks only: supports the support CE, roster picks one owned copy each', async () => {
+    const sp = spy();
+    const slots: Slot[] = [{ locked: alt }, { free: true }, { free: true }, { support: true }, filler(102), filler(103)];
+    const sup = [bat(60, 500)];
+    await autocomplete(req(slots, { roster: roster.slice(0, 3), supportPool: sup, ceFill: fillCes }), { solve: sp.solve, yieldNow });
+    expect(sp.teams.length).toBe(3);
+    for (const t of sp.teams) {
+      expect(t[0]).toBe(alt);
+      expect([t[1].key.split('@')[1], t[1].ceLv, t[1].ceMlb]).toEqual(['0', 100, true]);
+      expect([t[2].key.split('@')[1], t[2].ceLv, t[2].ceMlb]).toEqual(['1', 30, false]);
+      // Level capped at the CE's max.
+      expect([t[3].key, t[3].ceLv, t[3].ceMlb]).toEqual(['m60@s', kaleidoscope.atkGrowth.length, true]);
+      expect(t[4].ce).toBeNull();
+      // Every equipped key resolves to the same member.
+      const base = new Map([...roster, ...sup].map((m) => [m.key, m]));
+      for (const m of t.slice(1, 4)) expect(equippedMember(m.key, (k) => base.get(k), fillCes)).toEqual(m);
+    }
+  });
+  it('more free slots than owned copies: the rest stay without a CE', async () => {
+    const sp = spy();
+    const slots: Slot[] = [{ locked: alt }, { free: true }, { free: true }, filler(101), filler(102), filler(103)];
+    await autocomplete(req(slots, { roster: roster.slice(0, 2), ceFill: { roster: [fillCes.roster[0]], support: null } }), { solve: sp.solve, yieldNow });
+    expect(sp.teams[0][1].ce).toBe(kaleidoscope);
+    expect(sp.teams[0][2].ce).toBeNull();
+    expect(sp.teams[0][2].key).not.toContain('@');
+  });
+  it('a key without suffix or with an unknown tag does not resolve', () => {
+    expect(equippedMember('m1', () => roster[1], fillCes)).toBeNull();
+    expect(equippedMember('m1@7', () => roster[1], fillCes)).toBeNull();
   });
 });
 

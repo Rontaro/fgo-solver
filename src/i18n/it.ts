@@ -209,6 +209,7 @@ export const it: Messages = {
     showText: 'mostra testo',
     sortByBonus: 'ordina per bonus evento (oggetti in più per drop)',
     eventCeHint: 'Questo nodo ha CE con bonus evento che non stai usando (sceglili in uno slot CE):',
+    autoEventCes: "Nodo evento: i servant scelti in automatico indossano le sue CE evento (le tue copie, prima il bonus migliore; i support la migliore MLB).",
     closestTitle: (pct: string) => `Linea più vicina: resta il ${pct}% degli HP di un nemico dopo l'ultimo NP`,
     closestNote: "Non è un 3T: le carte giocate dopo l'NP possono chiudere l'ondata, ma niente lo garantisce (carte pescate, roll del danno).",
     actions: (n) => `${n} azioni`,
