@@ -4,6 +4,8 @@ import { useRegionData } from '../app/RegionData';
 import { DEFAULT_SETTINGS, getSettings, saveSettings, type Settings } from '../app/settings';
 import { IdbRosterStore } from '../roster/store';
 import { useT } from '../i18n';
+import { SYNC_ENABLED } from '../sync/api';
+import { SyncPanel } from '../sync/SyncPanel';
 
 const inp = 'w-24 rounded border border-gold-500/30 bg-night-950 px-2 py-1 text-sm text-night-50 focus:border-gold-400 focus:outline-none';
 
@@ -22,6 +24,7 @@ const Heading = ({ num, children }: { num: string; children: string }) => (
 
 export function SettingsPage() {
   const t = useT().settings;
+  const tSync = useT().sync;
   const { region, data } = useRegionData();
   const [s, setS] = useState<Settings>(getSettings);
   const [note, setNote] = useState('');
@@ -79,6 +82,12 @@ export function SettingsPage() {
         </div>
         <p className="text-xs text-night-400">{t.localNote}</p>
       </section>
+      {SYNC_ENABLED && (
+        <section className="panel space-y-3">
+          <Heading num="IV">{tSync.heading}</Heading>
+          <SyncPanel />
+        </section>
+      )}
       {note && <p role="status" className="text-sm text-gold-300">{note}</p>}
     </div>
   );
