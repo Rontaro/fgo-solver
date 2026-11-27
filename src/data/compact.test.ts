@@ -140,6 +140,26 @@ describe('convertFunctions', () => {
     onlyDragons.buffs[0].ckSelfIndv = [{ id: 2002 }];
     expect(run([onlyDragons])).toEqual({ out: [], unsupported: [] });
   });
+  it('buffConvert between ignored ally buffs (Kukulcan / Aoko: Invincible -> Anti-Enforcement DEF) is ignored; others are not', () => {
+    const conv = (from: string, to: string, convertType = 'buff') => ({
+      funcType: 'addState', funcTargetType: 'self',
+      buffs: [{ type: 'buffConvert', script: { convert: { convertType, targetBuffs: [{ type: from }], convertBuffs: [{ type: to }] } } }],
+      svals: [{ Rate: 1000, Turn: -1, Count: -1 }],
+    });
+    ignored(conv('invincible', 'specialInvincible'));
+    for (const f of [conv('upAtk', 'specialInvincible'), conv('invincible', 'upAtk'), conv('invincible', 'specialInvincible', 'individuality')]) {
+      const unsupported: string[] = [];
+      expect(convertFunctions([f], unsupported)).toEqual([]);
+      expect(unsupported).toEqual(['buff:buffConvert']);
+    }
+  });
+  it("Jekyll's transformation into Hyde (600710) is dropped; another servant's is not", () => {
+    const tr = (Value: number) => ({ funcType: 'transformServant', funcTargetType: 'self', buffs: [], svals: [{ Rate: 5000, Value, Target: 0 }] });
+    ignored(tr(600710));
+    const unsupported: string[] = [];
+    convertFunctions([tr(2501500)], unsupported);
+    expect(unsupported).toContain('func:transformServant');
+  });
   it('only-helpful effects on allies are ignored', () => {
     for (const t of ['pierceInvincible', 'breakAvoidance', 'subSelfdamage', 'downDefence',
       'downDefencecommandall', 'addIndividuality']) ignored(buff(t, 'self'));

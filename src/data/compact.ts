@@ -311,6 +311,14 @@ function classify(f: any, ctx: Ctx = { depth: 0, flip: false }): Class {
       return rateTraitsOf(f) ? { cls: 'apply', kind: 'buffRate' } : { cls: 'ignore', drop: 'buffRate:untracked' };
     }
     if ((side === 'ally' ? IGNORED_BUFFS_ALLY : IGNORED_BUFFS_ENEMY).has(t)) return { cls: 'ignore' };
+    // Turns some of our buffs into others (Kukulcan / Aoko: Invincible ->
+    // Anti-Enforcement DEF): ignored when both sides are buffs we ignore anyway.
+    if (side === 'ally' && t === 'buffConvert') {
+      const c = f.buffs[0].script?.convert;
+      const types = (bs: any[] | undefined) => (bs ?? []).map((b: any) => b?.type);
+      const all = c?.convertType === 'buff' ? [...types(c.targetBuffs), ...types(c.convertBuffs)] : [];
+      return all.length && all.every((x) => IGNORED_BUFFS_ALLY.has(x)) ? { cls: 'ignore' } : { cls: 'unsupported', reason: 'buff:buffConvert' };
+    }
     if (TRIGGER_BUFFS.has(t)) return classifyTrigger(f, t, side, ctx);
     return { cls: 'unsupported', reason: 'buff:' + t + at };
   }
@@ -604,6 +612,7 @@ export function convertFunctions(funcs: any[], unsupported: string[], opts: Conv
       out.push({ kind: 'transform', target: 'self', lv: svals.map(() => ({ value: 1, turns: -1, count: -1 })), toForm: formOfLimit(v0.SetLimitCount) });
       continue;
     }
+    if (f.funcType === 'transformServant' && idleTransform(f)) continue;
     const ctx: Ctx = { triggers: opts.triggers, depth: 0, flip: false, allowLoss: opts.allowLoss };
     const bt: string | undefined = f.buffs?.[0]?.type;
     const isState = f.funcType === 'addState' || f.funcType === 'addStateShort';
@@ -899,6 +908,16 @@ function castBlockOf(f: any): number[] | null {
 }
 
 /**
+ * A transformation that cannot change the outcome: Jekyll's NP turns him into
+ * Hyde (600710). Jekyll's NP deals no damage, Hyde's NP has no effect, and
+ * every skill of both targets the holder only (stats, crits, stun chance):
+ * nothing the 3T model reads on the rest of the team or on the enemies. Hyde
+ * keeps Jekyll's ATK (Chaldea's transformAlly returns early for 600700).
+ */
+const IDLE_TRANSFORMS = new Set([600710]);
+const idleTransform = (f: any) => f.funcTargetType === 'self' && f.svals?.length > 0 && f.svals.every((v: any) => IDLE_TRANSFORMS.has(v.Value));
+
+/**
  * `triggers`: skills run by trigger buffs (built by scripts/build-data.mjs).
  * Without it, trigger buffs other than the on-hit ones are unsupported.
  * `report`: drop audit sink (helpful effects not modelled, per part).
@@ -913,7 +932,7 @@ export function compactServant(svt: any, triggers?: TriggerLookup, report?: Part
   // skill and NP variant, not only the chosen ones.
   const groups = [...svt.skills, ...svt.noblePhantasms];
   const hides = FORM_HIDES[svt.id];
-  if (!hides && groups.some((g: any) => g.functions.some((f: any) => f.funcType === 'transformServant' && f.funcTargetTeam !== 'enemy'))) {
+  if (!hides && groups.some((g: any) => g.functions.some((f: any) => f.funcType === 'transformServant' && f.funcTargetTeam !== 'enemy' && !idleTransform(f)))) {
     unsupported.push('func:transformServant');
   }
   const append2 = svt.appendPassive?.find((a: any) => a.num === 101)?.skill;
