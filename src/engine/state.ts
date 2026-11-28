@@ -493,7 +493,7 @@ export function initBattle(members: readonly TeamMember[], mc: CompactMC, mcLv: 
   const blockTraits = new Set(members.flatMap((m) => m.svt.castBlockTraits ?? []));
   // CE / event passive effects on other units or tied to the field (applied below).
   const party: { e: Effect; v: LevelVal; holder: string; castBlocked: boolean }[] = [];
-  const built = members.map((m): Unit => {
+  const built = members.map((m, mi): Unit => {
     const svt = usableServant(m.svt);
     const castBlocked = svt.traits.some((t) => blockTraits.has(t));
     const what = (f: string) => `${m.key}.${f}`;
@@ -522,6 +522,8 @@ export function initBattle(members: readonly TeamMember[], mc: CompactMC, mcLv: 
       const v = e.lv[0];
       // A growing buff may start at 0 (Purely Bloom).
       if (!v || (v.value === 0 && !e.grow) || !effectActive(e, cond)) continue;
+      // An entry trigger runs at battle start only for the front line (Effect.entry).
+      if (e.entry && mi >= 3) continue;
       // A condition on the target's fixed traits: on this unit for a self effect (else per target, below).
       if (e.holderTraits && e.target === 'self' && !svt.traits.some((t) => e.holderTraits!.includes(t))) continue;
       if (e.target !== 'self' || e.onField) {
@@ -529,7 +531,8 @@ export function initBattle(members: readonly TeamMember[], mc: CompactMC, mcLv: 
         continue;
       }
       if (e.kind === 'gainNp') gauge += v.value;
-      else if (isBuffKind(e.kind) && !castBlocked) buffs.push({ ...toBuff(e, e.kind, v), passive: true });
+      // An entry trigger's buff is an ordinary (removable) buff, as in game.
+      else if (isBuffKind(e.kind) && !castBlocked) buffs.push(e.entry ? toBuff(e, e.kind, v) : { ...toBuff(e, e.kind, v), passive: true });
     }
     return {
       key: m.key, svt, lv: m.lv, npLv: m.npLv, skillLv: [...m.skillLv],
@@ -553,7 +556,7 @@ export function initBattle(members: readonly TeamMember[], mc: CompactMC, mcLv: 
         if (!e.onField) units[i] = { ...u, gauge: Math.min(gaugeCap(u.npLv), u.gauge + v.value) };
       } else if (isBuffKind(e.kind) && !castBlocked) {
         const b = toBuff(e, e.kind, v);
-        (u.buffs as Buff[]).push(e.onField ? { ...b, src: holder, passive: true } : { ...b, passive: true });
+        (u.buffs as Buff[]).push(e.onField ? { ...b, src: holder, passive: true } : e.entry ? b : { ...b, passive: true });
       }
     });
   }

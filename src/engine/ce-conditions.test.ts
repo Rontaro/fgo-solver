@@ -26,6 +26,18 @@ describe('CE conditions in the engine', () => {
     expect(s.front[0]!.buffs.find((b) => b.grow)!.value).toBe(100); // capped
   });
 
+  it('entry: party buff at battle start from a front-line holder only, removable', () => {
+    const king = ceOf({ kind: 'atkUp', target: 'ptAll', lv: [{ value: 150, turns: 3, count: -1 }], entry: true });
+    const q: Quest = { waves: [[foe(1)]] };
+    const team = (i: number) => ['a', 'b', 'c', 'd'].map((k, j) => member(altria, k, j === i ? { ce: king } : {}));
+    const atk = (s: ReturnType<typeof initBattle>) => s.front.map((u) => mods(u!, s.enemies[0], 'buster').atkMod);
+    const front = initBattle(team(1), mcCombat, 10, q, constants);
+    expect(atk(front)).toEqual([150, 150, 150]);
+    expect(front.front[0]!.buffs.find((b) => b.kind === 'atkUp')).toMatchObject({ turns: 3 });
+    expect(front.front[0]!.buffs.find((b) => b.kind === 'atkUp')!.passive).toBeUndefined();
+    expect(atk(initBattle(team(3), mcCombat, 10, q, constants))).toEqual([0, 0, 0]);
+  });
+
   it('opAll: counts only against an enemy with every trait', () => {
     const head = ceOf({ kind: 'powerUp', target: 'self', lv: perm(200), opTraits: [300, 303], opAll: true });
     const q: Quest = { waves: [[foe(1, [300]), foe(1, [300, 303])]] };

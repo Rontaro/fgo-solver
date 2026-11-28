@@ -601,6 +601,34 @@ function deferredOf(f: any, at: Deferred['at'], opts: ConvOpts): Effect[] | stri
 }
 
 /*
+ * A CE / event passive entryFunction trigger on its holder (f: addState of
+ * entryFunction, target self), as the effects of the skill it runs (at level
+ * Value2), each marked Effect.entry: they apply at battle start when the
+ * holder is on the front line. Only an unconditional, guaranteed trigger
+ * running one skill, whose functions all convert (or are ignored). Returns
+ * the effects, or a reason string.
+ */
+function entryOf(f: any, opts: ConvOpts): Effect[] | string {
+  if (!opts.triggers) return 'noLookup';
+  const svals: any[] = f.svals ?? [];
+  if (!svals.length) return 'noSkill';
+  const noLevel = (v: any) => { const o = { ...v }; delete o.Value2; return o; };
+  if (!plain({ ...f, svals: svals.map(noLevel) }, opts.selfTraits)) return 'cond';
+  if (svals.some((v) => isChancy(v) || (v.Rate ?? 1000) < 1000)) return 'rate';
+  const v0 = svals[0];
+  if (svals.some((v) => v.Value !== v0.Value || (v.Value2 ?? 1) !== (v0.Value2 ?? 1))) return 'skillPerLevel';
+  const skill = opts.triggers.get(v0.Value);
+  if (!skill) return 'missing:' + v0.Value;
+  const fns = (skill.functions ?? []).map((g: any) => ({ ...g, svals: [g.svals?.[(v0.Value2 ?? 1) - 1] ?? g.svals?.[0]] }));
+  if (fns.some((g: any) => !g.svals[0])) return 'noLevel';
+  const inner: string[] = [];
+  const es = convertFunctions(fns, inner, { triggers: opts.triggers, drops: opts.drops, start: true, selfTraits: opts.selfTraits });
+  if (inner.length) return inner[0];
+  if (es.some((e) => e.entry || e.onField || e.deferred)) return 'nested';
+  return es.map((e) => ({ ...e, lv: svals.map(() => e.lv[0]), entry: true as const }));
+}
+
+/*
  * Rate rules (applied after classification, so ignored effects are never
  * looked at and unsupported ones are reported whatever their Rate):
  * - Rate >= 1000: guaranteed (MCs use 5000).
@@ -708,6 +736,12 @@ export function convertFunctions(funcs: any[], unsupported: string[], opts: Conv
     const ctx: Ctx = { triggers: opts.triggers, depth: 0, flip: false, allowLoss: opts.allowLoss };
     const bt: string | undefined = f.buffs?.[0]?.type;
     const isState = f.funcType === 'addState' || f.funcType === 'addStateShort';
+    if (opts.start && isState && bt === 'entryFunction' && f.funcTargetType === 'self' && f.funcTargetTeam !== 'enemy') {
+      const d = entryOf(f, opts);
+      if (typeof d !== 'string') { out.push(...d); continue; }
+      const c = classify(f, ctx);
+      if (c.cls === 'ignore') { if (c.drop) drop(c.drop + ':' + d); continue; }
+    }
     const at = isState && bt ? DEFER[bt] : undefined;
     if (at && opts.restrict && SIDE[f.funcTargetType] === 'ally') {
       const d = deferredOf(f, at, opts);

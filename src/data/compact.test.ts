@@ -577,6 +577,18 @@ describe('compactCE', () => {
       // Not permanent: not modelled.
       expect(one(buffFn('upNpdamage', {}, { Value: 0, Turn: 3, ParamAdd: 50, ParamMax: 400 })).es).toEqual([]);
     });
+    it('entryFunction (King of Tsukumihara Academy): the skill it runs, marked entry; stars only lose nothing', () => {
+      const entry = (skill: number) => ({ ...buffFn('entryFunction', {}, { Count: 1, Value: skill, Value2: 1 }), funcType: 'addState' });
+      const atk = { ...buffFn('upAtk', {}, { Turn: 3, Value: 150 }, 'ptAll') };
+      const star = { funcType: 'gainStar', funcTargetType: 'self', funcTargetTeam: 'playerAndEnemy', functvals: [], funcquestTvals: [], buffs: [], svals: [{ Rate: 1000, Value: 15 }] };
+      const triggers = new Map<number, any>([[1, { id: 1, functions: [atk] }], [2, { id: 2, functions: [star] }]]);
+      const run = (f: any) => {
+        const report: PartDrops[] = [];
+        return { es: compactCE({ id: 1, collectionNo: 1, name: 'x', atkGrowth: [], skills: [sk(1, 0, f)] }, triggers, report).effects, report };
+      };
+      expect(run(entry(1)).es).toEqual([{ kind: 'atkUp', target: 'ptAll', lv: [{ value: 150, turns: 3, count: -1 }], entry: true }]);
+      expect(run(entry(2))).toEqual({ es: [], report: [] });
+    });
   });
   it('Kaleidoscope: gainNp self 80% non-MLB, 100% MLB', () => {
     const ce = compactCE(kscope as any);

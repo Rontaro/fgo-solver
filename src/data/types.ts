@@ -118,6 +118,13 @@ export interface Effect {
    */
   full?: true;
   onField?: true;
+  /**
+   * CE / event passive effects only: run by an entryFunction trigger when the
+   * holder enters the field. Chaldea runs it at battle start for the front
+   * line (battle.dart init: enterField); a holder starting in the back line
+   * would run it when it comes in, which is not modelled (it only helps).
+   */
+  entry?: true;
 }
 
 /**
