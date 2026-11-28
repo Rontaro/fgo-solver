@@ -374,7 +374,7 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
     let k = buffKeys[wave].get(b);
     if (k === undefined) {
       const turns = b.turns < 0 ? -1 : Math.min(b.turns, left(wave));
-      k = intern(`${b.kind},${b.value},${turns},${b.count},${b.cards?.join('') ?? ''},${b.opTraits?.join('.') ?? ''},${b.rateOf ?? ''},${b.buffTraits ?? ''}`);
+      k = intern(`${b.kind},${b.value},${turns},${b.count},${b.cards?.join('') ?? ''},${b.opTraits?.join('.') ?? ''}${b.opAll ? '&' : ''},${b.rateOf ?? ''},${b.buffTraits ?? ''}${b.grow ? `~${b.grow.add}` : ''}`);
       buffKeys[wave].set(b, k);
     }
     return k;

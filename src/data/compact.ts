@@ -13,6 +13,9 @@ import type {
 
 const CARD_BY_ID: Record<string, Card> = { '1': 'arts', '2': 'buster', '3': 'quick' };
 const CARD_BY_TRAIT: Record<number, Card> = { 4001: 'arts', 4002: 'buster', 4003: 'quick' };
+const EXTRA_TRAIT = 4004; // cardExtra: never an NP card
+// Kinds whose value the engine reads as a plain sum (Effect.grow can change it each turn).
+const isGrowKind = (k: EffectKind) => ['atkUp', 'cardUp', 'npDmgUp', 'powerUp', 'npGainUp', 'dmgPlus'].includes(k);
 const ALL_CARDS: Card[] = ['arts', 'buster', 'quick'];
 
 type Side = 'ally' | 'enemy';
@@ -177,8 +180,9 @@ const UNMODELLED_BUFF_TRAITS = new Set([2911]);
 const NOT_HELPFUL = new Set<EffectKind>(['orderChange']);
 const SVAL_KEYS = new Set([
   'Rate', 'Turn', 'Count', 'Value', 'ShowState', 'Correction', 'Target',
-  // Display only: whether to show "MISS"/"NO EFFECT" popups (no game logic).
-  'ShowQuestNoEffect', 'HideMiss', 'HideNoEffect',
+  // Display only: whether to show "MISS"/"NO EFFECT" popups, a passive-style
+  // icon frame (no game logic).
+  'ShowQuestNoEffect', 'HideMiss', 'HideNoEffect', 'SetPassiveFrame',
   // Random pick among sets (ActSet + weight) or a player-chosen option
   // (ActSelectIndex): the effect is not guaranteed, so isChancy() turns it into
   // a failed chance (value 0) like Rate < 1000.
@@ -192,6 +196,7 @@ const CHANCE_KEYS = ['ActSet', 'ActSelectIndex'];
 // UpBuffRateBuffIndiv: which buffs a buffRate amplifies (read by classify).
 // relationId: overwriteClassRelation's table (EffectKind classRel, read by convertFunctions).
 const BUFF_SCRIPT_KEYS = new Set(['ProgressSelfTurn', 'checkIndvType', 'UpBuffRateBuffIndiv', 'relationId']);
+const ALL_MATCH = new Set([1, 3]); // checkIndvType: every listed trait must match (Chaldea checkIndvTypeAnd)
 // Function script keys we accept: funcIndividuality = the function's own
 // traits, only when it is the "demerit" tag (3098). It only matters to effects
 // that block demerits, which we never model: ignoring them can only keep a
@@ -393,7 +398,9 @@ function plain(f: any, selfTraits?: Set<number>, quest = false): boolean {
   const b = f.buffs?.[0];
   const script = b?.script ?? {};
   if (!Object.keys(script).every((k) => BUFF_SCRIPT_KEYS.has(k))) return false;
-  if ('checkIndvType' in script && ((b.ckSelfIndv?.length ?? 0) > 1 || (b.ckOpIndv?.length ?? 0) > 1)) return false;
+  // Several ckOpIndv traits: all of them (checkIndvType 1 / 3) is Effect.opAll;
+  // other match modes on lists, and several ckSelfIndv traits, are not modelled.
+  if ('checkIndvType' in script && ((b.ckSelfIndv?.length ?? 0) > 1 || ((b.ckOpIndv?.length ?? 0) > 1 && !ALL_MATCH.has(script.checkIndvType)))) return false;
   return true;
 }
 
@@ -459,15 +466,18 @@ interface ConvOpts {
 function holderCond(f: any): { f: any; holderTraits?: number[] } {
   const tv: number[] = (f.functvals ?? []).map((t: any) => t.id);
   const b = f.buffs?.[0];
-  const ind = b?.script?.INDIVIDUALITIE;
-  const scriptOk = ind && typeof ind.id === 'number' && ind.id > 0
-    && Object.keys(b.script).every((k: string) => k === 'INDIVIDUALITIE' || k === 'ProgressSelfTurn');
+  // INDIVIDUALITIE: one trait; INDIVIDUALITIE_OR: any of a list (Hometown: female or unknown).
+  const key = b?.script?.INDIVIDUALITIE ? 'INDIVIDUALITIE' : b?.script?.INDIVIDUALITIE_OR ? 'INDIVIDUALITIE_OR' : null;
+  const ids: number[] = key ? [b.script[key]].flat().map((t: any) => t?.id) : [];
+  const scriptOk = !!key && ids.length > 0 && ids.every((id) => typeof id === 'number' && id > 0)
+    && !('INDIVIDUALITIE' in b.script && 'INDIVIDUALITIE_OR' in b.script)
+    && Object.keys(b.script).every((k: string) => k === key || k === 'ProgressSelfTurn');
   if (!(tv.length && tv.every((t) => t > 0)) && !scriptOk) return { f };
-  const traits = [...(tv.length && tv.every((t) => t > 0) ? tv : []), ...(scriptOk ? [ind.id] : [])];
+  const traits = [...(tv.length && tv.every((t) => t > 0) ? tv : []), ...(scriptOk ? ids : [])];
   if (tv.length && scriptOk) return { f }; // both at once: not handled (all-of vs any-of)
   const out = { ...f, ...(tv.length && { functvals: [] }) };
   if (scriptOk) {
-    const { INDIVIDUALITIE: _i, ...rest } = b.script;
+    const { [key!]: _i, ...rest } = b.script;
     out.buffs = [{ ...b, script: rest }, ...f.buffs.slice(1)];
   }
   return { f: out, holderTraits: traits };
@@ -511,6 +521,23 @@ function traitBuffKeys(f: any): { f: any; stackMax?: number } {
     return { f: { ...f, ...sets(({ Value2, ...v }: any) => (Value2 === 0 ? v : { ...v, Value2 })) } };
   }
   return { f };
+}
+
+/**
+ * Battle-start buffs whose value grows each turn (Atlas ParamAdd / ParamMax:
+ * Purely Bloom, The Crimson Land of Shadows): on the holder, permanent, the
+ * same step and cap everywhere. Returns the function without those keys
+ * (Effect.grow), else as is (plain() then rejects it: the buff is dropped).
+ */
+function growKeys(f: any): { f: any; grow?: { add: number; max: number } } {
+  const all = svalSets(f).flat();
+  const v0 = all[0];
+  if (!v0 || !('ParamAdd' in v0) || f.funcTargetType !== 'self' || !(f.funcType === 'addState' || f.funcType === 'addStateShort')) return { f };
+  const ok = all.every((v) => v.ParamAdd === v0.ParamAdd && v.ParamMax === v0.ParamMax && (v.Turn ?? -1) === -1 && (v.Count ?? -1) === -1 && (v.Value ?? 0) >= 0)
+    && v0.ParamAdd > 0 && v0.ParamMax > 0;
+  if (!ok) return { f };
+  const strip = ({ ParamAdd: _a, ParamMax: _m, ...v }: any) => v;
+  return { f: { ...f, ...Object.fromEntries(['svals', ...OC_SVALS].filter((k) => f[k]).map((k) => [k, f[k].map(strip)])) }, grow: { add: v0.ParamAdd, max: v0.ParamMax } };
 }
 
 /** End-of-turn trigger buffs that can become deferred effects (Effect.deferred). */
@@ -609,7 +636,8 @@ export function convertFunctions(funcs: any[], unsupported: string[], opts: Conv
     // functvals, or the buff script's single INDIVIDUALITIE) is kept as
     // Effect.holderTraits and checked by the engine at battle start.
     const { f: f1, holderTraits } = opts.start ? holderCond(stripped.f) : { f: stripped.f, holderTraits: undefined };
-    const { f, stackMax } = traitBuffKeys(f1);
+    const { f: f2, stackMax } = traitBuffKeys(f1);
+    const { f, grow } = opts.start ? growKeys(f2) : { f: f2, grow: undefined };
     // team=enemy: only runs when an enemy casts it. Never for our side.
     if (f.funcTargetTeam === 'enemy' || optionOnly(f)) { prevOk = false; continue; }
     const svals: any[] = f.svals ?? [];
@@ -746,13 +774,15 @@ export function convertFunctions(funcs: any[], unsupported: string[], opts: Conv
         const cards = op.map((id) => CARD_BY_TRAIT[id]).filter(Boolean);
         if (self.length || cards.length !== op.length) { drop('holderTrait:' + c.kind); continue; }
         if (cards.length) e.cards = cards;
-      } else if (c.kind === 'cardUp') {
-        // Empty ckSelfIndv = unconditioned: applies to every card, NP card included.
-        const cards = self.length ? self.map((id) => CARD_BY_TRAIT[id]).filter(Boolean) : ALL_CARDS;
-        // A non-card trait in ckSelfIndv is a holder condition: dropped (helpful).
-        if (cards.length !== self.length && self.length) { drop('holderTrait:' + c.kind); continue; }
+      } else if (self.length && self.every((id) => CARD_BY_TRAIT[id] || id === EXTRA_TRAIT)) {
+        // On some cards (any kind of buff: Atlas Institute's Arts NP damage up).
+        // Extra attacks only: never on an NP card, so nothing is lost.
+        const cards = self.map((id) => CARD_BY_TRAIT[id]).filter(Boolean);
+        if (!cards.length) continue;
         e.cards = cards;
       } else if (self.length) { drop('holderTrait:' + c.kind); continue; } // holder-trait condition on a helpful buff
+      // Empty ckSelfIndv = unconditioned: a card up applies to every card, NP card included.
+      else if (c.kind === 'cardUp') e.cards = ALL_CARDS;
       if (c.kind === 'classRel') {
         const atk = b.script.relationId.atkSide;
         e.classRel = Object.fromEntries(Object.entries(atk).map(([a, m]: [string, any]) =>
@@ -761,11 +791,19 @@ export function convertFunctions(funcs: any[], unsupported: string[], opts: Conv
       }
       const onEnemy = c.kind === 'defDown' || c.kind === 'cardResDown';
       if (op.length && !onEnemy) e.opTraits = op;
+      if (op.length > 1 && ALL_MATCH.has(b.script?.checkIndvType)) {
+        if (onEnemy) { drop('holderTrait:' + c.kind); continue; } // all of several cards: never
+        e.opAll = true;
+      }
       if (c.kind === 'buffRate') e.rateOf = rateTraitsOf(f)!;
       else if (!onEnemy) {
         const tr: number[] = (b.vals ?? []).map((t: any) => t.id).filter((id: number) => RATE_TRAITS.has(id));
         if (tr.length) e.buffTraits = tr;
       }
+    }
+    if (grow) {
+      if (!isGrowKind(c.kind)) { drop('grow:' + c.kind); continue; }
+      e.grow = grow;
     }
     if (c.kind === 'traitBuff') {
       // Its value is only "present" (Atlas Value is the trait it adds: not ours).

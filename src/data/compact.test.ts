@@ -275,15 +275,19 @@ describe('convertFunctions', () => {
     // ...and a follow-up after them is not unconditional either.
     expect(run([buff('upAtk', 'self', { ActSet: 1 }), func('gainNp', 'self', { Rate: -1000 })]).out).toEqual([]);
   });
-  it('checkIndvType is accepted only with at most one trait per list', () => {
+  it('checkIndvType: one trait per list, or several ckOpIndv traits that must all match (opAll)', () => {
     const one = buff('upDamage');
     one.buffs[0].script = { checkIndvType: 1 } as any;
     one.buffs[0].ckOpIndv = [{ id: 1 }] as any;
     expect(run([one]).out[0].opTraits).toEqual([1]);
-    const two = buff('upDamage');
-    two.buffs[0].script = { checkIndvType: 1 } as any;
-    two.buffs[0].ckOpIndv = [{ id: 1 }, { id: 2 }] as any;
-    expect(run([two])).toEqual(DROPPED);
+    const two = (checkIndvType: number) => {
+      const f = buff('upDamage');
+      f.buffs[0].script = { checkIndvType } as any;
+      f.buffs[0].ckOpIndv = [{ id: 1 }, { id: 2 }] as any;
+      return f;
+    };
+    expect(run([two(1)]).out[0]).toMatchObject({ opTraits: [1, 2], opAll: true });
+    expect(run([two(2)])).toEqual(DROPPED);
   });
   it('self functvals are accepted only when the servant always has the traits', () => {
     const f = buff('upAtk', 'self', {}, { functvals: [{ id: 300 }] });
@@ -536,6 +540,43 @@ describe('compactCE', () => {
     expect(rerun.effects.map((e) => e.fieldTraits)).toEqual([[1], [2]]);
     const levels = compactCE({ id: 1, collectionNo: 1, name: 'x', atkGrowth: [], skills: [sk(2, 0, fn(100, [1])), sk(2, 0, fn(200, [1])), sk(3, 0, fn(5))] });
     expect(vals(levels.effects)).toEqual([5]);
+  });
+  describe('conditions (synthetic, shaped like the Atlas CEs named)', () => {
+    const buffFn = (type: string, b: object = {}, sv: object = {}, target = 'self') => ({
+      funcType: 'addStateShort', funcTargetType: target, funcTargetTeam: 'playerAndEnemy', functvals: [], funcquestTvals: [],
+      buffs: [{ type, ckSelfIndv: [], ckOpIndv: [], script: {}, vals: [], ...b }],
+      svals: [{ Rate: 1000, Turn: -1, Count: -1, Value: 200, ...sv }],
+    });
+    const one = (...functions: any[]) => {
+      const report: PartDrops[] = [];
+      const ce = compactCE({ id: 1, collectionNo: 1, name: 'x', atkGrowth: [], skills: [sk(1, 0, ...functions)] }, undefined, report);
+      return { es: ce.effects, report };
+    };
+    it('card conditions on any buff (Atlas Institute: Arts NP damage up); Extra-only ones lost nothing', () => {
+      const ids = (...xs: number[]) => xs.map((id) => ({ id }));
+      expect(one(buffFn('upNpdamage', { ckSelfIndv: ids(4001) })).es[0]).toMatchObject({ kind: 'npDmgUp', cards: ['arts'] });
+      expect(one(buffFn('upDropnp', { ckSelfIndv: ids(4001) })).es[0]).toMatchObject({ kind: 'npGainUp', cards: ['arts'] });
+      expect(one(buffFn('upCommandall', { ckSelfIndv: ids(4004) }))).toEqual({ es: [], report: [] });
+      expect(one(buffFn('upNpdamage', { ckSelfIndv: ids(2) })).report[0].drops).toEqual(['holderTrait:npDmgUp']);
+    });
+    it('SetPassiveFrame is display only', () => {
+      expect(one(buffFn('upNpdamage', {}, { SetPassiveFrame: 1 })).es).toHaveLength(1);
+    });
+    it('INDIVIDUALITIE_OR: a holder with any of the traits (Hometown: female or unknown)', () => {
+      const f = buffFn('upCommandall', { ckSelfIndv: [{ id: 4001 }], script: { INDIVIDUALITIE_OR: [{ id: 2 }, { id: 3 }] } });
+      expect(one(f).es[0]).toMatchObject({ kind: 'cardUp', cards: ['arts'], holderTraits: [2, 3] });
+    });
+    it('several ckOpIndv traits that must all match (Jokanaan: checkIndvType 1) -> opAll; another mode is dropped', () => {
+      const f = (checkIndvType: number) => buffFn('upDamage', { ckOpIndv: [{ id: 300 }, { id: 303 }], script: { checkIndvType } });
+      expect(one(f(1)).es[0]).toMatchObject({ kind: 'powerUp', opTraits: [300, 303], opAll: true });
+      expect(one(f(2)).es).toEqual([]);
+    });
+    it('a buff growing every turn (Purely Bloom: 0 +5% per turn up to 40%) -> grow', () => {
+      const bloom = buffFn('upNpdamage', {}, { Value: 0, ParamAdd: 50, ParamMax: 400 });
+      expect(one(bloom).es[0]).toMatchObject({ kind: 'npDmgUp', lv: [{ value: 0 }], grow: { add: 50, max: 400 } });
+      // Not permanent: not modelled.
+      expect(one(buffFn('upNpdamage', {}, { Value: 0, Turn: 3, ParamAdd: 50, ParamMax: 400 })).es).toEqual([]);
+    });
   });
   it('Kaleidoscope: gainNp self 80% non-MLB, 100% MLB', () => {
     const ce = compactCE(kscope as any);

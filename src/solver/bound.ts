@@ -138,7 +138,9 @@ export function damageBound(s: BattleState, c: BoundCtx): BoundFail | null {
       // Live buffs still active on wave W (a buff on a back unit is frozen there: counted).
       const inBack = !s.front.includes(u);
       for (const b of u.buffs as readonly Buff[]) {
-        if (b.turns < 0 || inBack || b.turns >= W - T + 1) put(b, b.value);
+        // A growing buff is worth its value after the W - T turn ends to come (at most).
+        const v = b.grow ? Math.min(b.grow.max, b.value + b.grow.add * (W - T)) : b.value;
+        if (b.turns < 0 || inBack || b.turns >= W - T + 1) put(b, v);
       }
       // Dormant auras (holder in the back) may wake up with the order change: counted.
       for (const b of u.dormant ?? []) put(b, b.value);

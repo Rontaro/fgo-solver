@@ -14,6 +14,8 @@ export interface Buff {
   readonly cards?: readonly Card[]; readonly opTraits?: readonly number[];
   /** buffRate: buff traits it amplifies; other kinds: their traits a buffRate can target (Effect). */
   readonly rateOf?: readonly number[]; readonly buffTraits?: readonly number[];
+  /** Effect.grow / Effect.opAll. */
+  readonly grow?: { readonly add: number; readonly max: number }; readonly opAll?: true;
   /** Aura (Effect.onField): counts only while the unit with this key is on the front line. */
   readonly src?: string;
   /** classRel: see Effect.classRel. */
@@ -349,6 +351,8 @@ function toBuff(e: Effect, kind: BuffKind, v: LevelVal): Buff {
   if (e.rateOf) b.rateOf = e.rateOf;
   if (e.buffTraits) b.buffTraits = e.buffTraits;
   if (e.classRel) b.classRel = e.classRel;
+  if (e.grow) b.grow = e.grow;
+  if (e.opAll) b.opAll = true;
   return b;
 }
 
@@ -516,7 +520,8 @@ export function initBattle(members: readonly TeamMember[], mc: CompactMC, mcLv: 
     ];
     for (const e of start) {
       const v = e.lv[0];
-      if (!v || v.value === 0 || !effectActive(e, cond)) continue;
+      // A growing buff may start at 0 (Purely Bloom).
+      if (!v || (v.value === 0 && !e.grow) || !effectActive(e, cond)) continue;
       // A condition on the target's fixed traits: on this unit for a self effect (else per target, below).
       if (e.holderTraits && e.target === 'self' && !svt.traits.some((t) => e.holderTraits!.includes(t))) continue;
       if (e.target !== 'self' || e.onField) {
@@ -640,7 +645,10 @@ export function useMc(state: BattleState, index: number, mc: CompactMC, mcLv: nu
 function tick(u: Unit): Unit {
   let changed = u.cd[0] > 0 || u.cd[1] > 0 || u.cd[2] > 0;
   const buffs: Buff[] = [];
-  for (const b of u.buffs) {
+  for (const b0 of u.buffs) {
+    // A growing buff gains its step at the end of the holder's turn (Chaldea selfTurnPass).
+    const b = b0.grow && b0.value < b0.grow.max ? { ...b0, value: Math.min(b0.grow.max, b0.value + b0.grow.add) } : b0;
+    if (b !== b0) changed = true;
     if (b.turns < 0) buffs.push(b);
     else { changed = true; if (b.turns > 1) buffs.push({ ...b, turns: b.turns - 1 }); }
   }
@@ -700,7 +708,7 @@ export function nextWave(state: BattleState, quest: Quest, constants: Constants)
 /** True when the buff counts for this card against this enemy. */
 export function buffApplies(b: Buff, enemy: Enemy, card: Card): boolean {
   if (b.cards && !b.cards.includes(card)) return false;
-  if (b.opTraits && !b.opTraits.some((t) => enemy.traits.includes(t))) return false;
+  if (b.opTraits && !(b.opAll ? b.opTraits.every : b.opTraits.some).call(b.opTraits, (t) => enemy.traits.includes(t))) return false;
   return true;
 }
 

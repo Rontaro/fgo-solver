@@ -86,6 +86,14 @@ export interface Effect {
   /** traitBuff: the most a unit can hold of buffs with these traits. */
   stackMax?: number;
   /**
+   * Battle-start buffs only: the value grows by `add` at the end of each of
+   * the holder's turns, up to `max` (Atlas ParamAdd / ParamMax, Chaldea
+   * turnPassParamAdd: Purely Bloom starts at 0 and gains 5% per turn).
+   */
+  grow?: { add: number; max: number };
+  /** opTraits must all be on the enemy (Atlas checkIndvType 1 / 3), not just one. */
+  opAll?: true;
+  /**
    * CE / event passive effects only: the effect applies only to a unit with
    * one of these fixed traits (Atlas functvals on the function, or the buff
    * script's INDIVIDUALITIE), checked at battle start (e.g. Kaleid Sapphire:
