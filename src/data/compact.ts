@@ -1,5 +1,6 @@
 // Explicit .ts: scripts/build-data.mjs loads this file with Node directly (type stripping).
 import { FORM_HIDES, formOfLimit, type FormHides } from './forms.ts';
+import { STATUS_TRAITS } from './status.ts';
 import type {
   EventBonus, Card, Effect, EffectKind, TargetKind, Skill, NoblePhantasm,
   CompactServant, CompactCE, CompactMC, LevelVal, EventPassive, Deferred, PartUnsupported,
@@ -310,6 +311,7 @@ function classifyTrigger(f: any, t: string, side: Side, ctx: Ctx): Class {
 
 // Debuffs on enemies we model (EffectKind defDown / cardResDown), when cast
 // directly by our skills / NPs (not from inside trigger buffs).
+const statusTraitsOf = (f: any): number[] => (f.buffs?.[0]?.vals ?? []).map((t: any) => t.id).filter((id: number) => STATUS_TRAITS.has(id));
 const ENEMY_DEBUFF_KIND: Record<string, EffectKind> = { downDefence: 'defDown', downDefencecommandall: 'cardResDown' };
 
 function classify(f: any, ctx: Ctx = { depth: 0, flip: false }): Class {
@@ -321,6 +323,8 @@ function classify(f: any, ctx: Ctx = { depth: 0, flip: false }): Class {
     if (!t) return { cls: 'unsupported', reason: 'buff:none' };
     if (side === 'ally' && BUFF_KIND[t]) return { cls: 'apply', kind: BUFF_KIND[t] };
     if (side === 'enemy' && ENEMY_DEBUFF_KIND[t] && ctx.depth === 0 && !ctx.flip) return { cls: 'apply', kind: ENEMY_DEBUFF_KIND[t] };
+    // A status some buffs check (burn, curse...): recorded on the enemy.
+    if (side === 'enemy' && IGNORED_BUFFS_ENEMY.has(t) && statusTraitsOf(f).length && ctx.depth === 0 && !ctx.flip) return { cls: 'apply', kind: 'enemyStatus' };
     if (side === 'ally' && DEMERIT_BUFF[t] && ctx.depth === 0 && !ctx.flip) return { cls: 'apply', kind: DEMERIT_BUFF[t], demerit: true };
     // Extra hits on some cards (Musashi Berserker S2): more damage, not modelled (dropped).
     if (side === 'ally' && t === 'multiattack') return { cls: 'ignore', drop: 'buff:multiattack' };
@@ -336,6 +340,9 @@ function classify(f: any, ctx: Ctx = { depth: 0, flip: false }): Class {
     // hurt: unsupported.
     if (side === 'ally' && (t === 'upDamageIndividuality' || t === 'upDamageIndividualityActiveonly')) {
       if (svalSets(f).some((set) => set.some((v: any) => (v.Value ?? 0) < 0))) return { cls: 'unsupported', reason: 'buff:' + t + '-' };
+      // Against statuses we record (Enemy.status): a powerUp with those opTraits.
+      const op: number[] = (f.buffs[0].ckOpIndv ?? []).map((x: any) => x.id);
+      if (op.length && op.every((id) => STATUS_TRAITS.has(id))) return { cls: 'apply', kind: 'powerUp' };
       return { cls: 'ignore', drop: 'buff:' + t };
     }
     if (side === 'ally' && t === 'buffRate') {
@@ -653,7 +660,9 @@ function entryOf(f: any, opts: ConvOpts): Effect[] | string {
  */
 export function convertFunctions(funcs: any[], unsupported: string[], opts: ConvOpts = {}): Effect[] {
   const out: Effect[] = [];
-  const drop = (tag: string) => opts.drops?.push(tag);
+  // A status we cannot count on (chance, condition) was never counted before
+  // statuses were recorded: not reported as a loss.
+  const drop = (tag: string) => { if (!tag.endsWith(':enemyStatus')) opts.drops?.push(tag); };
   let prevOk = false;
   let afterDamage = false;
   for (const f0 of funcs) {
@@ -790,18 +799,24 @@ export function convertFunctions(funcs: any[], unsupported: string[], opts: Conv
     }
 
     // lv = OC1 values: code that ignores OC stays conservative for helpful effects.
-    const e: Effect = { kind: c.kind, target: TARGET[f.funcTargetType], lv: levels(svals, lvOk), ...qc };
+    // A status: 1 when applied (its Value is a DoT amount, or absent).
+    const lvOf = (s: any[], ok: boolean[]) => levels(c.kind === 'enemyStatus' ? s.map((v) => ({ ...v, Value: 1 })) : s, ok);
+    const e: Effect = { kind: c.kind, target: TARGET[f.funcTargetType], lv: lvOf(svals, lvOk), ...qc };
     if (opts.start && (f.funcTargetType === 'ptFull' || f.funcTargetType === 'ptOtherFull')) e.full = true;
     if (onField) e.onField = true;
     if (holderTraits) e.holderTraits = holderTraits;
     if (opts.npExtras && sets.length === 5 && sets.some((s) => JSON.stringify(s) !== JSON.stringify(svals))) {
-      e.oc = sets.map((s, i) => levels(s, setOk[i]));
+      e.oc = sets.map((s, i) => lvOf(s, setOk[i]));
     }
     if (isState) {
       const b = f.buffs[0];
       const self: number[] = (b.ckSelfIndv ?? []).map((t: any) => t.id);
       const op: number[] = (b.ckOpIndv ?? []).map((t: any) => t.id);
-      if (c.kind === 'defDown' || c.kind === 'cardResDown') {
+      if (c.kind === 'enemyStatus') {
+        // A condition on the enemy (charm: female only) or the attacker: dropped.
+        if (self.length || op.length) { drop('holderTrait:' + c.kind); continue; }
+        e.buffTraits = statusTraitsOf(f);
+      } else if (c.kind === 'defDown' || c.kind === 'cardResDown') {
         // On the enemy: ckOpIndv = the attacking card (or attacker traits),
         // ckSelfIndv = traits the enemy must have. Only card conditions are
         // modelled; any other condition drops the (helpful) debuff.
@@ -823,7 +838,7 @@ export function convertFunctions(funcs: any[], unsupported: string[], opts: Conv
           [a, Object.fromEntries(Object.entries(m).map(([d, x]: [string, any]) => [d, x.damageRate]))]));
         e.lv = e.lv.map((v) => ({ ...v, value: 1 })); // no Value in Atlas: 1 = active
       }
-      const onEnemy = c.kind === 'defDown' || c.kind === 'cardResDown';
+      const onEnemy = c.kind === 'defDown' || c.kind === 'cardResDown' || c.kind === 'enemyStatus';
       if (op.length && !onEnemy) e.opTraits = op;
       if (op.length > 1 && ALL_MATCH.has(b.script?.checkIndvType)) {
         if (onEnemy) { drop('holderTrait:' + c.kind); continue; } // all of several cards: never

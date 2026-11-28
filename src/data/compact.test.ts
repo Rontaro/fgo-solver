@@ -577,6 +577,16 @@ describe('compactCE', () => {
       // Not permanent: not modelled.
       expect(one(buffFn('upNpdamage', {}, { Value: 0, Turn: 3, ParamAdd: 50, ParamMax: 400 })).es).toEqual([]);
     });
+    it('statuses: a curse on enemies -> enemyStatus; damage vs Cursed (How To Travel the Stars) -> powerUp', () => {
+      const cursed = buffFn('reduceHp', { vals: [{ id: 3026 }] }, { Turn: 3, Value: 500 }, 'enemy');
+      expect(one(cursed).es[0]).toMatchObject({ kind: 'enemyStatus', target: 'enemy', buffTraits: [3026], lv: [{ value: 1, turns: 3 }] });
+      // Not guaranteed: not modelled, and not reported as a loss.
+      expect(one(buffFn('reduceHp', { vals: [{ id: 3026 }] }, { Rate: 500 }, 'enemy'))).toEqual({ es: [], report: [] });
+      const stars = buffFn('upDamageIndividuality', { ckOpIndv: [{ id: 3026 }] });
+      expect(one(stars).es[0]).toMatchObject({ kind: 'powerUp', opTraits: [3026], lv: [{ value: 200 }] });
+      // Another trait (not a status we record): still dropped.
+      expect(one(buffFn('upDamageIndividuality', { ckOpIndv: [{ id: 2000 }] })).report[0].drops).toEqual(['buff:upDamageIndividuality']);
+    });
     it('entryFunction (King of Tsukumihara Academy): the skill it runs, marked entry; stars only lose nothing', () => {
       const entry = (skill: number) => ({ ...buffFn('entryFunction', {}, { Count: 1, Value: skill, Value2: 1 }), funcType: 'addState' });
       const atk = { ...buffFn('upAtk', {}, { Turn: 3, Value: 150 }, 'ptAll') };
@@ -607,7 +617,8 @@ describe('compactMC', () => {
     expect(atk.target).toBe('ptAll');
     expect(atk.lv[0].value).toBe(200);
     expect(mc.skills[2].effects.find((e) => e.kind === 'orderChange')!.target).toBe('orderChange');
-    expect(mc.skills[1].effects).toEqual([]);
+    // Gandr: a stun, recorded as a status (immobilize trait) for the buffs that check it.
+    expect(mc.skills[1].effects).toMatchObject([{ kind: 'enemyStatus', target: 'enemy', buffTraits: [3045] }]);
     expect(mc.unsupported).toEqual([]);
   });
 });

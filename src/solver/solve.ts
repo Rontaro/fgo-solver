@@ -1,5 +1,6 @@
 import type { Card, CompactMC, Constants, Effect } from '../data/types';
 import { inForm } from '../data/forms';
+import { STATUS_TRAITS } from '../data/status';
 // The engine's useSkill / useMc are imported as castSkill / castMc: they are not
 // React hooks, and the lint rule goes by the name.
 import { initBattle, useSkill as castSkill, useMc as castMc, endTurn, nextWave, livingSlots, isEnemyDebuff, soleTarget, canNp, canSkill, isHarmful, type BattleState, type Buff, type Enemy, type Quest, type TeamMember, type Unit } from '../engine/state';
@@ -426,7 +427,7 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
     if (h === undefined) {
       h = es.map((e) => (e.debuffs?.length
         ? `${e.hp}~${e.debuffs.map((d) => `${d.kind}:${d.value}:${d.count}:${d.cards?.join('/') ?? ''}`).sort().join(';')}`
-        : `${e.hp}`)).join(',');
+        : `${e.hp}`) + (e.status?.length ? `!${e.status.join('.')}` : '')).join(',');
       enemyHashes.set(es, h);
     }
     return h;
@@ -494,7 +495,8 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
   const traitAhead = (wave: number, traits: readonly number[]) => {
     let r = traitCache[wave].get(traits);
     if (r === undefined) {
-      r = quest.waves.slice(wave).some((w) => w.some((en) => en.traits.some((t) => traits.includes(t))));
+      // A status trait (data/status.ts): our skills / NPs may put it on an enemy.
+      r = traits.some((t) => STATUS_TRAITS.has(t)) || quest.waves.slice(wave).some((w) => w.some((en) => en.traits.some((t) => traits.includes(t))));
       traitCache[wave].set(traits, r);
     }
     return r;
@@ -524,6 +526,12 @@ export function solve(team: readonly TeamMember[], mc: CompactMC, mcLv: number, 
       if (e.target === 'enemy' || e.target === 'enemyAll') {
         // A debuff on enemies counts when it lands on a debuffable enemy and
         // some front-line NP is of a card it applies to.
+        if (e.kind === 'enemyStatus') {
+          // Counts when some front-line unit holds a buff checking one of its traits.
+          const tr = e.buffTraits ?? [];
+          if (s.front.some((u) => u?.buffs.some((b) => b.opTraits?.some((t) => tr.includes(t))))) relevant = true;
+          continue;
+        }
         if (!isEnemyDebuff(e.kind)) continue;
         const hit = e.target === 'enemyAll' ? s.field.filter((ei) => ei >= 0 && s.enemies[ei].hp > 0) : [soleTarget(s)].filter((ei) => ei >= 0);
         if (hit.some((ei) => !s.enemies[ei].noDebuff) && s.front.some((u) => u?.svt.np && (!e.cards || e.cards.includes(u.svt.np.card)))) relevant = true;

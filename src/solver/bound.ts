@@ -1,5 +1,6 @@
 import type { CompactMC, Constants, Effect, NoblePhantasm } from '../data/types';
 import { inForm } from '../data/forms';
+import { STATUS_TRAITS } from '../data/status';
 import { affKey, affinity, effectActive, isEnemyDebuff, layoutOf, usableServant, type BattleState, type Buff, type Enemy, type Quest, type Unit } from '../engine/state';
 import { npDamage } from '../engine/damage';
 import { specificRate } from '../engine/np';
@@ -49,8 +50,9 @@ const FIELD: Record<DmgKind, 'atkMod' | 'cardMod' | 'npDmgMod' | 'powerMod' | 'd
 const isDmg = (k: string): k is DmgKind => k in FIELD;
 
 /** A damage buff (effect or live buff) counted for holder u's NP against enemy en. */
+// A status trait (data/status.ts) may be put on any enemy by then: counted (optimistic).
 const counts = (x: { kind: string; cards?: readonly string[]; opTraits?: readonly number[] }, np: NoblePhantasm, en: Enemy) =>
-  isDmg(x.kind) && !(x.cards && !x.cards.includes(np.card)) && !(x.opTraits && !x.opTraits.some((t) => en.traits.includes(t)));
+  isDmg(x.kind) && !(x.cards && !x.cards.includes(np.card)) && !(x.opTraits && !x.opTraits.some((t) => en.traits.includes(t) || STATUS_TRAITS.has(t)));
 
 const reaches = (target: Effect['target'], caster: string | null, u: Unit) =>
   target === 'ptAll' || target === 'ptOne' || (caster !== null && (target === 'self' ? caster === u.key : target === 'ptOther' && caster !== u.key));

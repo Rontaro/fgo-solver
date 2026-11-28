@@ -46,6 +46,10 @@ export type EffectKind =
   // Removes up to `value` traitBuffs of the holder having one of
   // Effect.buffTraits (Atlas subState: Aoko's NP expends 10 bullets). A demerit.
   | 'removeTraitBuffs'
+  // A status on enemies (burn, curse, skill seal...) carrying Effect.buffTraits
+  // (data/status.ts STATUS_TRAITS): recorded on them (Enemy.status) for the
+  // buffs that check it. Value 1 = applied (0 = not guaranteed).
+  | 'enemyStatus'
   // Removes the holder's removable positive buffs (Atlas subState of
   // buffPositiveEffect on our side, Hassan of the Hundred Personas S3): a
   // demerit. Passive / CE buffs (battle start) cannot be removed.

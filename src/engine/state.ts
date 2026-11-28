@@ -64,6 +64,8 @@ export interface Enemy {
   readonly noDebuff?: true;
   /** Our debuffs on it (only within its wave: every wave dies on its turn). */
   readonly debuffs?: readonly EnemyDebuff[];
+  /** Traits of our statuses on it (EffectKind enemyStatus, data/status.ts), within its wave. */
+  readonly status?: readonly number[];
 }
 /**
  * A debuff on an enemy (EffectKind defDown / cardResDown). count: attacks it
@@ -431,12 +433,21 @@ export interface EffectDraft {
  */
 export function applyEffect(d: EffectDraft, e: Effect, v: LevelVal, casterKey: string | null, targetKey?: string, enemyTarget?: number): void {
   if (v.value === 0 || e.kind === 'orderChange' || !effectActive(e, d.cond)) return;
-  if (isEnemyDebuff(e.kind)) {
+  if (isEnemyDebuff(e.kind) || e.kind === 'enemyStatus') {
     if ((e.target !== 'enemy' && e.target !== 'enemyAll') || !d.enemies || !d.field) return;
     const es = d.enemies.slice();
     const living = d.field.filter((ei) => ei >= 0 && es[ei].hp > 0);
     const hit = e.target === 'enemyAll' ? living
       : [enemyTarget ?? soleTarget({ enemies: es, field: d.field, target: d.target ?? -1, npsFired: d.npsFired ?? 0 })].filter((ei) => living.includes(ei));
+    if (e.kind === 'enemyStatus') {
+      const add = e.buffTraits ?? [];
+      for (const ei of hit) {
+        const old = es[ei].status ?? [];
+        if (!es[ei].noDebuff && add.some((t) => !old.includes(t))) es[ei] = { ...es[ei], status: [...new Set([...old, ...add])].sort((a, b) => a - b) };
+      }
+      d.enemies = es;
+      return;
+    }
     const deb: EnemyDebuff = { kind: e.kind, value: v.value, count: v.count, ...(e.cards && { cards: e.cards }) };
     for (const ei of hit) if (!es[ei].noDebuff) es[ei] = { ...es[ei], debuffs: [...(es[ei].debuffs ?? []), deb] };
     d.enemies = es;
@@ -711,7 +722,9 @@ export function nextWave(state: BattleState, quest: Quest, constants: Constants)
 /** True when the buff counts for this card against this enemy. */
 export function buffApplies(b: Buff, enemy: Enemy, card: Card): boolean {
   if (b.cards && !b.cards.includes(card)) return false;
-  if (b.opTraits && !(b.opAll ? b.opTraits.every : b.opTraits.some).call(b.opTraits, (t) => enemy.traits.includes(t))) return false;
+  // The enemy's traits plus our statuses on it (Chaldea: its buff traits too).
+  const has = (t: number) => enemy.traits.includes(t) || !!enemy.status?.includes(t);
+  if (b.opTraits && !(b.opAll ? b.opTraits.every(has) : b.opTraits.some(has))) return false;
   return true;
 }
 
